@@ -14,3 +14,10 @@ spike-tty.log
 /tmp/
 /*.bin
 /*.log
+
+# Local-only: plans, brainstorms, curation audits, handover notes, beads issue db.
+# Kept out of the public repo so shipping pace isn't gated on polishing planning
+# docs for a public audience. The canonical plan lives in the author's local
+# /docs tree and the beads graph; the repo carries code + README only.
+/docs/
+/.beads/

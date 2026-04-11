@@ -52,6 +52,14 @@ ignore = [
     # Track upstream: https://github.com/ratatui-org/ratatui/issues and
     # re-evaluate when ratatui drops the dep or migrates to `pastey`.
     "RUSTSEC-2024-0436",
+    # RUSTSEC-2026-0002: `lru` < 0.16.3 has an IterMut soundness issue
+    # (Stacked Borrows violation). Severity: low (CVSS 2.7). Comes in
+    # transitively via ratatui 0.29 → lru 0.12.5. Fixed in lru 0.16.3, but
+    # ratatui 0.29 pins the old major. Resolving requires upgrading to
+    # ratatui 0.30 (subcrate split rewrite — non-trivial migration). We don't
+    # use ratatui's IterMut code paths ourselves, so impact is nil. Revisit
+    # alongside the ratatui 0.30 upgrade.
+    "RUSTSEC-2026-0002",
 ]
 
 [sources]

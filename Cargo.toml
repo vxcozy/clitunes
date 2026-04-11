@@ -5,8 +5,11 @@ members = [
     "crates/clitunes-engine",
     "crates/clitunes",
     "crates/clitunesd",
-    "crates/clitunes-spike",
 ]
+# clitunes-spike is Phase 0 wgpu→Kitty throughput investigation code, superseded
+# by the slice-2 CPU CellGrid+AnsiWriter rewrite. Kept in-tree for historical
+# reference but excluded from the workspace so CI doesn't lint or build it.
+exclude = ["crates/clitunes-spike"]
 
 [workspace.package]
 edition = "2021"

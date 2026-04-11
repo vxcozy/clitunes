@@ -6,14 +6,31 @@ license.workspace = true
 description = "clitunes engine: audio, sources, visualiser, tui, layout, control — feature-gated."
 
 [features]
-default = ["audio", "sources", "visualiser", "tui", "control", "layout"]
+default = ["audio", "sources", "radio", "decode", "visualiser", "tui", "control", "layout"]
 
 # Feature boundaries preserve the daemon-must-not-depend-on-visualiser invariant (D15).
-# The clitunesd binary declares `default-features = false, features = ["audio", "control", "sources"]`.
+# The clitunesd binary declares `default-features = false, features = ["audio", "control", "sources", "radio", "decode"]`.
 audio = ["dep:cpal", "dep:realfft"]
 sources = ["audio"]
+# Radio source: discovery + station lookup + reqwest streaming. Pulled in by
+# the daemon (no GPU/TUI deps), kept off the spike binary unless asked.
+radio = [
+    "sources",
+    "dep:reqwest",
+    "dep:hickory-resolver",
+    "dep:tokio",
+    "dep:dirs",
+    "dep:bytes",
+    "dep:futures-util",
+]
+# Symphonia decoder. Gated so the spike binary and any future tooling that
+# only wants the parser / ring / tone source doesn't pull symphonia in.
+decode = ["audio", "dep:symphonia"]
 control = []
-visualiser = ["audio", "dep:wgpu", "dep:pollster", "dep:bytemuck", "dep:base64"]
+# Pure-CPU truecolor ANSI cell grid + half-block renderer. No GPU deps; the
+# wgpu+Kitty pipeline was replaced after slice 1 because per-frame readback
+# and base64 transmission dominated CPU and battery.
+visualiser = ["audio"]
 tui = ["dep:ratatui", "dep:crossterm"]
 layout = ["tui"]
 
@@ -34,9 +51,15 @@ libc.workspace = true
 cpal = { workspace = true, optional = true }
 realfft = { workspace = true, optional = true }
 
-wgpu = { workspace = true, optional = true }
-pollster = { workspace = true, optional = true }
-bytemuck = { workspace = true, optional = true }
-base64 = { workspace = true, optional = true }
 ratatui = { workspace = true, optional = true }
 crossterm = { workspace = true, optional = true }
+
+# Radio feature deps.
+reqwest = { workspace = true, optional = true }
+hickory-resolver = { workspace = true, optional = true }
+tokio = { workspace = true, optional = true }
+dirs = { workspace = true, optional = true }
+bytes = { workspace = true, optional = true }
+futures-util = { workspace = true, optional = true }
+
+symphonia = { workspace = true, optional = true }

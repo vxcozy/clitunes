@@ -5,6 +5,12 @@ use crate::audio::PcmRingWriter;
 
 pub mod tone_source;
 
+#[cfg(feature = "radio")]
+pub mod radio;
+
+#[cfg(feature = "decode")]
+pub mod symphonia_decode;
+
 /// A source writes PCM frames into the ring until it is stopped. Sources
 /// run on their own thread in Slice 1 (no async). The control layer starts
 /// and stops them.

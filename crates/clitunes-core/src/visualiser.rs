@@ -7,6 +7,11 @@ use serde::{Deserialize, Serialize};
 #[serde(rename_all = "lowercase")]
 pub enum VisualiserId {
     Auralis,
+    Plasma,
+    Ripples,
+    Tunnel,
+    Metaballs,
+    Starfield,
     Tideline,
     Cascade,
 }
@@ -15,6 +20,11 @@ impl VisualiserId {
     pub fn as_str(&self) -> &'static str {
         match self {
             Self::Auralis => "auralis",
+            Self::Plasma => "plasma",
+            Self::Ripples => "ripples",
+            Self::Tunnel => "tunnel",
+            Self::Metaballs => "metaballs",
+            Self::Starfield => "starfield",
             Self::Tideline => "tideline",
             Self::Cascade => "cascade",
         }
@@ -23,6 +33,11 @@ impl VisualiserId {
     pub fn parse(s: &str) -> Option<Self> {
         match s {
             "auralis" => Some(Self::Auralis),
+            "plasma" => Some(Self::Plasma),
+            "ripples" => Some(Self::Ripples),
+            "tunnel" => Some(Self::Tunnel),
+            "metaballs" => Some(Self::Metaballs),
+            "starfield" => Some(Self::Starfield),
             "tideline" => Some(Self::Tideline),
             "cascade" => Some(Self::Cascade),
             _ => None,
@@ -30,13 +45,14 @@ impl VisualiserId {
     }
 }
 
-/// Which rendering surface a visualiser runs on. This is the forcing
-/// function for the rendering-path-agnostic visualiser trait (D8): Cascade
-/// is pure-CPU ratatui, Auralis and Tideline are GPU + Kitty graphics.
+/// Which rendering surface a visualiser runs on. Post-pivot, every built-in
+/// visualiser is `Tui` — a CPU cell grid emitted as truecolor ANSI. The
+/// enum is retained for forward compatibility if a future visualiser ever
+/// needs a different surface (e.g. a raw pixel buffer for image display).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SurfaceKind {
-    /// Pure-CPU, rendered by ratatui as unicode cells.
+    /// Pure-CPU cell grid rendered as truecolor ANSI.
     Tui,
-    /// GPU-rendered, streamed to the terminal via Kitty graphics protocol.
+    /// Reserved for a hypothetical GPU/Kitty path. Not currently used.
     Gpu,
 }

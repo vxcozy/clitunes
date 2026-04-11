@@ -14,11 +14,12 @@ clitunes-core = { path = "../clitunes-core" }
 clitunes-engine = { path = "../clitunes-engine", default-features = false, features = [
     "audio",
     "sources",
+    "radio",
+    "decode",
     "visualiser",
     "control",
 ] }
 
 anyhow.workspace = true
 tracing.workspace = true
-pollster.workspace = true
 libc.workspace = true

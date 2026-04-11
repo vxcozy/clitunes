@@ -36,6 +36,19 @@ crossterm = "0.28"
 libc = "0.2"
 parking_lot = "0.12"
 
+# Networking + async (Slice 2: radio source).
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "stream", "gzip"] }
+hickory-resolver = "0.24"
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros", "time", "fs", "io-util", "sync", "net"] }
+dirs = "5"
+bytes = "1"
+futures-util = "0.3"
+
+# Audio decoding (Slice 2 Unit 7). Pure-Rust, no ffmpeg/native deps.
+# Default features already cover FLAC/Vorbis/OGG/WAV/PCM/MKV; we add mp3 + aac + isomp4
+# for the typical MP3 icecast/AAC-HE Shoutcast stream and M4A radio mirrors.
+symphonia = { version = "0.5.5", features = ["mp3", "aac", "isomp4"] }
+
 [profile.release]
 lto = "thin"
 codegen-units = 1

@@ -1,0 +1,21 @@
+[package]
+name = "clitunes-spike"
+version = "0.0.1"
+edition.workspace = true
+license.workspace = true
+publish = false
+description = "Phase 0 throwaway spike: wgpu off-screen render → Kitty graphics protocol throughput measurement. DELETED at end of Phase 1."
+
+[[bin]]
+name = "clitunes-spike"
+path = "src/main.rs"
+
+[dependencies]
+wgpu = "29"
+pollster = "0.4"
+bytemuck = { version = "1.16", features = ["derive"] }
+base64 = "0.22"
+hdrhistogram = "7"
+env_logger = "0.11"
+log = "0.4"
+anyhow = "1"

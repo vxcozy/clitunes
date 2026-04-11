@@ -1,0 +1,21 @@
+[package]
+name = "clitunesd"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "clitunes daemon — audio/sources/control only. D15: no wgpu, ratatui, or crossterm."
+
+[[bin]]
+name = "clitunesd"
+path = "src/main.rs"
+
+[dependencies]
+clitunes-core = { path = "../clitunes-core" }
+clitunes-engine = { path = "../clitunes-engine", default-features = false, features = [
+    "audio",
+    "sources",
+    "control",
+] }
+
+anyhow.workspace = true
+tracing.workspace = true

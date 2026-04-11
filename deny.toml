@@ -1,0 +1,48 @@
+# cargo-deny config for clitunes.
+#
+# Licence policy: MIT + Apache-2.0 ecosystem. Keep the allow list conservative
+# so any new license shows up as a CI failure and gets a human review.
+
+[graph]
+targets = [
+    { triple = "x86_64-apple-darwin" },
+    { triple = "aarch64-apple-darwin" },
+    { triple = "x86_64-unknown-linux-gnu" },
+    { triple = "aarch64-unknown-linux-gnu" },
+]
+all-features = false
+
+[licenses]
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Zlib",
+    "Unicode-3.0",
+    "Unicode-DFS-2016",
+    "CC0-1.0",
+    "MPL-2.0",
+    "BSL-1.0",
+    "MIT-0",
+]
+confidence-threshold = 0.93
+
+[bans]
+multiple-versions = "allow"
+wildcards = "warn"
+# D15: the daemon binary must never pull the visualiser/tui deps. Enforced in
+# CI via `cargo tree -p clitunesd` grep; cargo-deny is a second line of defence
+# that runs on the full workspace tree.
+deny = []
+
+[advisories]
+version = 2
+yanked = "warn"
+ignore = []
+
+[sources]
+unknown-registry = "warn"
+unknown-git = "warn"

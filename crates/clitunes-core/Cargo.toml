@@ -1,0 +1,10 @@
+[package]
+name = "clitunes-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "clitunes core types — pure, no I/O, no feature gates."
+
+[dependencies]
+serde.workspace = true
+thiserror.workspace = true

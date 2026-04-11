@@ -1,0 +1,27 @@
+name: e2e
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+permissions:
+  contents: read
+
+jobs:
+  e2e:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Build clitunes
+        run: cargo build -p clitunes --release
+      - name: Run e2e harness
+        run: |
+          export CLITUNES_BIN="$GITHUB_WORKSPACE/target/release/clitunes"
+          bash tests/e2e/run.sh

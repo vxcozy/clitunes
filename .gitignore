@@ -1,0 +1,16 @@
+# Rust build artifacts
+/target/
+**/*.rs.bk
+*.pdb
+
+# Local editor / tool state
+.bv/
+.idea/
+.vscode/
+.DS_Store
+
+# Stray dev outputs
+spike-tty.log
+/tmp/
+/*.bin
+/*.log

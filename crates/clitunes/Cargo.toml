@@ -1,0 +1,24 @@
+[package]
+name = "clitunes"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "clitunes — the Ghostty of TUI music apps."
+
+[[bin]]
+name = "clitunes"
+path = "src/main.rs"
+
+[dependencies]
+clitunes-core = { path = "../clitunes-core" }
+clitunes-engine = { path = "../clitunes-engine", default-features = false, features = [
+    "audio",
+    "sources",
+    "visualiser",
+    "control",
+] }
+
+anyhow.workspace = true
+tracing.workspace = true
+pollster.workspace = true
+libc.workspace = true

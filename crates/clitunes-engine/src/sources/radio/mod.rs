@@ -358,8 +358,8 @@ async fn network_loop(
                         now_playing.track_title = Some(t.clone());
                         now_playing.track_url = url_meta;
                         info!(track = %t, "icy track change");
-                        let _ = now_playing_tx
-                            .send(NowPlayingEvent::TrackChanged(now_playing.clone()));
+                        let _ =
+                            now_playing_tx.send(NowPlayingEvent::TrackChanged(now_playing.clone()));
                     }
                 }
 
@@ -367,9 +367,7 @@ async fn network_loop(
                 // slow, sync_channel::send blocks, which is fine — tokio's
                 // current_thread executor has nothing else to run on this
                 // thread anyway.
-                if !parsed.audio.is_empty()
-                    && push_audio(&audio_tx, parsed.audio, &stop).is_err()
-                {
+                if !parsed.audio.is_empty() && push_audio(&audio_tx, parsed.audio, &stop).is_err() {
                     info!("radio: decoder receiver closed; network loop exiting");
                     return;
                 }

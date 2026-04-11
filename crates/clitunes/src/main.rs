@@ -30,9 +30,7 @@ use anyhow::{Context, Result};
 use clitunes_core::{PcmFormat, Station};
 use clitunes_engine::audio::{FftTap, PcmRing};
 use clitunes_engine::observability;
-use clitunes_engine::sources::radio::{
-    resolve_station_blocking, RadioConfig, RadioSource,
-};
+use clitunes_engine::sources::radio::{resolve_station_blocking, RadioConfig, RadioSource};
 use clitunes_engine::sources::{tone_source::ToneSource, Source};
 use clitunes_engine::tui::persistence::{
     default_state_path, load_state, save_state, Recovery, State, SOURCE_RADIO,
@@ -834,4 +832,3 @@ fn install_signal_handler(stop: Arc<AtomicBool>) -> Result<()> {
         })?;
     Ok(())
 }
-

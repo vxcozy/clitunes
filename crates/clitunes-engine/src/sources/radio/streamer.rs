@@ -140,7 +140,10 @@ impl RadioStreamer {
             }
         }
         Err(last_err.unwrap_or_else(|| {
-            anyhow!("could not open stream after {} attempts", BACKOFF_SCHEDULE.len() + 1)
+            anyhow!(
+                "could not open stream after {} attempts",
+                BACKOFF_SCHEDULE.len() + 1
+            )
         }))
     }
 

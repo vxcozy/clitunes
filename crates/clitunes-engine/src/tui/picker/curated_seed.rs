@@ -80,7 +80,10 @@ pub enum CuratedLoadOutcome {
 /// and those are reported via [`CuratedLoadOutcome::OverrideRejected`]
 /// so the caller can `warn!()` once.
 pub fn load_curated(override_path: Option<&Path>) -> (CuratedList, CuratedLoadOutcome) {
-    let path = match override_path.map(PathBuf::from).or_else(default_override_path) {
+    let path = match override_path
+        .map(PathBuf::from)
+        .or_else(default_override_path)
+    {
         Some(p) => p,
         None => return (baked_list(), CuratedLoadOutcome::BakedNoOverride),
     };
@@ -286,7 +289,11 @@ mod tests {
         let baked = baked_list();
         let mut seen = std::collections::HashSet::new();
         for s in &baked.stations {
-            assert!(seen.insert(s.genre.clone()), "duplicate genre {:?}", s.genre);
+            assert!(
+                seen.insert(s.genre.clone()),
+                "duplicate genre {:?}",
+                s.genre
+            );
         }
     }
 
@@ -328,7 +335,10 @@ rationale = "covers the ambient slot for testing"
         assert_eq!(list.stations.len(), 2);
         assert_eq!(list.stations[0].slot, 0);
         assert_eq!(list.stations[1].slot, 1);
-        assert_eq!(list.stations[1].rationale, "covers the ambient slot for testing");
+        assert_eq!(
+            list.stations[1].rationale,
+            "covers the ambient slot for testing"
+        );
     }
 
     #[test]

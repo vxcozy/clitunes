@@ -192,9 +192,7 @@ pub fn save_state(state: &State, path: &Path) -> Result<()> {
 
     tmp.write_all(serialized.as_bytes())
         .context("write state bytes")?;
-    tmp.as_file()
-        .sync_all()
-        .context("fsync state tempfile")?;
+    tmp.as_file().sync_all().context("fsync state tempfile")?;
 
     tmp.persist(path)
         .map_err(|e| anyhow::anyhow!("persist state file: {}", e))?;
@@ -215,8 +213,8 @@ fn ensure_parent_dir(dir: &Path) -> Result<()> {
         fs::create_dir_all(dir)
             .with_context(|| format!("creating state parent dir {}", dir.display()))?;
     }
-    let meta = fs::metadata(dir)
-        .with_context(|| format!("stat state parent dir {}", dir.display()))?;
+    let meta =
+        fs::metadata(dir).with_context(|| format!("stat state parent dir {}", dir.display()))?;
     let mode = meta.permissions().mode() & 0o777;
     if mode & 0o077 != 0 {
         // Group or other bits set — tighten to 0700.
@@ -290,7 +288,11 @@ mod tests {
     fn persisted_file_is_mode_0600() {
         let dir = tempdir().unwrap();
         let path = dir.path().join("clitunes").join("state.toml");
-        save_state(&State::with_station("uuid-1", Some("Test FM".into())), &path).unwrap();
+        save_state(
+            &State::with_station("uuid-1", Some("Test FM".into())),
+            &path,
+        )
+        .unwrap();
 
         let meta = fs::metadata(&path).unwrap();
         let mode = meta.permissions().mode() & 0o777;

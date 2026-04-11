@@ -201,8 +201,7 @@ async fn resolve_srv_with_timeout() -> Result<Vec<Mirror>> {
 }
 
 async fn resolve_srv() -> Result<Vec<Mirror>> {
-    let resolver =
-        TokioAsyncResolver::tokio(ResolverConfig::default(), ResolverOpts::default());
+    let resolver = TokioAsyncResolver::tokio(ResolverConfig::default(), ResolverOpts::default());
     let lookup = resolver
         .srv_lookup(SRV_QUERY)
         .await
@@ -284,10 +283,26 @@ mod tests {
     #[test]
     fn rfc2782_sort_priority_then_weight_desc() {
         let mut input = vec![
-            Mirror { host: "lo-prio".into(), priority: 20, weight: 100 },
-            Mirror { host: "hi-prio-low-w".into(), priority: 10, weight: 1 },
-            Mirror { host: "hi-prio-high-w".into(), priority: 10, weight: 50 },
-            Mirror { host: "hi-prio-mid-w".into(), priority: 10, weight: 25 },
+            Mirror {
+                host: "lo-prio".into(),
+                priority: 20,
+                weight: 100,
+            },
+            Mirror {
+                host: "hi-prio-low-w".into(),
+                priority: 10,
+                weight: 1,
+            },
+            Mirror {
+                host: "hi-prio-high-w".into(),
+                priority: 10,
+                weight: 50,
+            },
+            Mirror {
+                host: "hi-prio-mid-w".into(),
+                priority: 10,
+                weight: 25,
+            },
         ];
         sort_by_rfc2782(&mut input);
         assert_eq!(input[0].host, "hi-prio-high-w");
@@ -309,7 +324,11 @@ mod tests {
 
     #[test]
     fn https_base_format() {
-        let m = Mirror { host: "de1.api.radio-browser.info".into(), priority: 0, weight: 0 };
+        let m = Mirror {
+            host: "de1.api.radio-browser.info".into(),
+            priority: 0,
+            weight: 0,
+        };
         assert_eq!(m.https_base(), "https://de1.api.radio-browser.info");
     }
 }

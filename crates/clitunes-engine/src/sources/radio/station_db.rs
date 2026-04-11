@@ -101,9 +101,8 @@ impl StationDb {
                 }
             }
         }
-        Err(last_err.unwrap_or_else(|| {
-            anyhow!("could not reach radio-browser.info; check your network")
-        }))
+        Err(last_err
+            .unwrap_or_else(|| anyhow!("could not reach radio-browser.info; check your network")))
     }
 }
 
@@ -224,7 +223,10 @@ mod tests {
             bitrate: None,
             codec: None,
         };
-        assert_eq!(raw.into_station().url_resolved, "https://example.com/stream.mp3");
+        assert_eq!(
+            raw.into_station().url_resolved,
+            "https://example.com/stream.mp3"
+        );
     }
 
     #[test]

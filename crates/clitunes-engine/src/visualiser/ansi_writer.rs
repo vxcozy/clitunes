@@ -61,12 +61,7 @@ impl<W: Write> AnsiWriter<W> {
                     write!(
                         self.out,
                         "\x1b[38;2;{};{};{};48;2;{};{};{}m",
-                        cell.fg.r,
-                        cell.fg.g,
-                        cell.fg.b,
-                        cell.bg.r,
-                        cell.bg.g,
-                        cell.bg.b,
+                        cell.fg.r, cell.fg.g, cell.fg.b, cell.bg.r, cell.bg.g, cell.bg.b,
                     )?;
                     prev_colors = Some(next);
                 }

@@ -104,10 +104,7 @@ where
     M: MediaSource + 'static,
     F: FnMut(&[StereoFrame]),
 {
-    let mss = MediaSourceStream::new(
-        Box::new(source),
-        MediaSourceStreamOptions::default(),
-    );
+    let mss = MediaSourceStream::new(Box::new(source), MediaSourceStreamOptions::default());
 
     let mut hint = Hint::new();
     if let Some(ext) = cfg.extension_hint {
@@ -174,9 +171,7 @@ where
 
         let packet = match format.next_packet() {
             Ok(pkt) => pkt,
-            Err(SymphoniaError::IoError(e))
-                if e.kind() == std::io::ErrorKind::UnexpectedEof =>
-            {
+            Err(SymphoniaError::IoError(e)) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
                 debug!(?stats, "decode_stream: clean EOF");
                 // Final flush of any tail sample left in the resampler.
                 resampler.flush(&mut out_scratch);

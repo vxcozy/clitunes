@@ -32,6 +32,6 @@ pub mod curated_seed;
 pub mod paint;
 pub mod state;
 
-pub use curated_seed::{load_curated, CuratedLoadOutcome, CuratedList, CURATED_SLOT_COUNT};
+pub use curated_seed::{load_curated, CuratedList, CuratedLoadOutcome, CURATED_SLOT_COUNT};
 pub use paint::{paint_picker, Rect};
 pub use state::{key_from_bytes, PickerAction, PickerKey, PickerState};

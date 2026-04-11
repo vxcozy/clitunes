@@ -111,7 +111,15 @@ pub fn paint_picker(grid: &mut CellGrid, list: &CuratedList, selected: usize) ->
     let inner_x0 = x0 + 2;
     let inner_x1 = x1.saturating_sub(2);
     let inner_w = inner_x1.saturating_sub(inner_x0);
-    write_centered(grid, inner_x0, inner_w, y0 + 1, HEADER_PRIMARY, HEADER_FG, BODY_BG);
+    write_centered(
+        grid,
+        inner_x0,
+        inner_w,
+        y0 + 1,
+        HEADER_PRIMARY,
+        HEADER_FG,
+        BODY_BG,
+    );
     write_centered(
         grid,
         inner_x0,
@@ -150,14 +158,17 @@ pub fn paint_picker(grid: &mut CellGrid, list: &CuratedList, selected: usize) ->
 
     // Footer.
     let footer_y = y1.saturating_sub(2);
-    write_centered(grid, inner_x0, inner_w, footer_y, FOOTER, BODY_DIM_FG, BODY_BG);
+    write_centered(
+        grid,
+        inner_x0,
+        inner_w,
+        footer_y,
+        FOOTER,
+        BODY_DIM_FG,
+        BODY_BG,
+    );
 
-    Some(Rect {
-        x0,
-        y0,
-        x1,
-        y1,
-    })
+    Some(Rect { x0, y0, x1, y1 })
 }
 
 /// Catastrophically-small fallback: one line of text at the top.
@@ -270,9 +281,7 @@ pub fn truncate_or_pad(s: &str, cells: usize) -> String {
 /// just catches anything that slipped through (bugs, future fields,
 /// runtime-loaded override files) before it reaches the terminal.
 pub fn safe_chars(s: &str) -> String {
-    s.chars()
-        .filter(|c| !c.is_control())
-        .collect::<String>()
+    s.chars().filter(|c| !c.is_control()).collect::<String>()
 }
 
 fn fill_rect(grid: &mut CellGrid, x0: u16, y0: u16, x1: u16, y1: u16, bg: Rgb) {

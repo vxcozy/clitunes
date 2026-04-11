@@ -39,10 +39,26 @@ fn baked_in_list_is_nonempty_and_clean() {
 #[test]
 fn rfc2782_sort_orders_priority_then_weight_descending() {
     let mut input = vec![
-        Mirror { host: "z".into(), priority: 30, weight: 100 },
-        Mirror { host: "a".into(), priority: 10, weight: 5 },
-        Mirror { host: "b".into(), priority: 10, weight: 50 },
-        Mirror { host: "c".into(), priority: 20, weight: 10 },
+        Mirror {
+            host: "z".into(),
+            priority: 30,
+            weight: 100,
+        },
+        Mirror {
+            host: "a".into(),
+            priority: 10,
+            weight: 5,
+        },
+        Mirror {
+            host: "b".into(),
+            priority: 10,
+            weight: 50,
+        },
+        Mirror {
+            host: "c".into(),
+            priority: 20,
+            weight: 10,
+        },
     ];
     sort_by_rfc2782(&mut input);
     let order: Vec<&str> = input.iter().map(|m| m.host.as_str()).collect();
@@ -66,7 +82,10 @@ async fn missing_cache_offline_falls_through_to_baked_in() {
     // (Live SRV is also acceptable when running on a developer box with net.)
     match discovered.source {
         MirrorSource::BakedIn | MirrorSource::LiveSrv => {}
-        other => panic!("unexpected mirror source for missing-cache test: {:?}", other),
+        other => panic!(
+            "unexpected mirror source for missing-cache test: {:?}",
+            other
+        ),
     }
 }
 
@@ -78,5 +97,8 @@ async fn discover_returns_consistent_priority_ordering() {
     let priorities: Vec<u16> = discovered.mirrors.iter().map(|m| m.priority).collect();
     let mut sorted = priorities.clone();
     sorted.sort();
-    assert_eq!(priorities, sorted, "mirrors should already be sorted by priority");
+    assert_eq!(
+        priorities, sorted,
+        "mirrors should already be sorted by priority"
+    );
 }

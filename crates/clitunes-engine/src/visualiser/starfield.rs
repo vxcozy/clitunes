@@ -210,7 +210,10 @@ mod tests {
         // Cells should either be empty space (nebula bg, space fg) or a
         // plotted star (non-space glyph).
         let plotted = grid.cells().iter().filter(|c| c.ch != ' ').count();
-        assert!(plotted > 0, "expected at least some stars to land on the grid");
+        assert!(
+            plotted > 0,
+            "expected at least some stars to land on the grid"
+        );
     }
 
     #[test]

@@ -44,6 +44,10 @@ dirs = "5"
 bytes = "1"
 futures-util = "0.3"
 
+# Atomic file writes (Slice 2 Unit 8). Used for state.toml so a crash
+# mid-write can't leave a truncated / corrupt file on disk.
+tempfile = "3"
+
 # Audio decoding (Slice 2 Unit 7). Pure-Rust, no ffmpeg/native deps.
 # Default features already cover FLAC/Vorbis/OGG/WAV/PCM/MKV; we add mp3 + aac + isomp4
 # for the typical MP3 icecast/AAC-HE Shoutcast stream and M4A radio mirrors.

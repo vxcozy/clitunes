@@ -19,3 +19,10 @@ pub mod sources;
 
 #[cfg(feature = "visualiser")]
 pub mod visualiser;
+
+/// TUI overlay layer: state persistence, curated picker, modal paint
+/// helpers. Persistence is always compiled because the daemon (which
+/// disables the `visualiser` / `tui` stack) still needs to read
+/// `state.toml` to auto-resume. The picker submodule is visualiser-gated
+/// because it paints into `CellGrid`.
+pub mod tui;

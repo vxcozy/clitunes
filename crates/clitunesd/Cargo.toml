@@ -14,6 +14,8 @@ clitunes-core = { path = "../clitunes-core" }
 clitunes-engine = { path = "../clitunes-engine", default-features = false, features = [
     "audio",
     "sources",
+    "radio",
+    "decode",
     "control",
 ] }
 

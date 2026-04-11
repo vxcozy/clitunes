@@ -25,7 +25,7 @@ impl<W: Write> KittyWriter<W> {
         write!(self.out, "{}[2J{}[H", ESC, ESC)
     }
 
-    /// Transmit one frame of f=24 RGBA pixel data with the same image id so
+    /// Transmit one frame of f=32 RGBA pixel data with the same image id so
     /// the terminal updates in place. Returns bytes written to the output sink.
     pub fn write_frame(&mut self, width: u32, height: u32, rgba: &[u8]) -> std::io::Result<usize> {
         let b64 = base64::engine::general_purpose::STANDARD.encode(rgba);
@@ -40,7 +40,7 @@ impl<W: Write> KittyWriter<W> {
             if i == 0 {
                 // First chunk carries all metadata.
                 let header = format!(
-                    "a=T,f=24,s={w},v={h},i={id},q=2,m={m}",
+                    "a=T,f=32,s={w},v={h},i={id},q=2,m={m}",
                     w = width,
                     h = height,
                     id = self.image_id,

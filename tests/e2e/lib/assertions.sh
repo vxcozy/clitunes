@@ -68,16 +68,19 @@ assert_json_log_field() {
     fi
 }
 
-# assert_stdout_kitty_apc <stdout_file>
-# Verifies the stdout stream contains at least one well-formed Kitty APC
-# graphics header (ESC _G a=T,f=24,...). Slice 1's primary success signal.
-assert_stdout_kitty_apc() {
+# assert_stdout_ansi_truecolor <stdout_file>
+# Verifies the stdout stream contains ANSI CSI SGR truecolor sequences
+# (ESC [ 38;2;R;G;B m or ESC [ 48;2;R;G;B m). This is the post-slice-2
+# CellGrid+AnsiWriter output signature; the slice-1 Kitty APC path is gone.
+assert_stdout_ansi_truecolor() {
     local path="$1"
-    # ESC _G — the APC start followed by graphics introducer.
-    if head -c 65536 "$path" | grep -qE 'a=T,f=24,s=[0-9]+,v=[0-9]+,i=[0-9]+'; then
-        printf '%s stdout contains kitty APC f=24 frame\n' "$E2E_PASS"
+    # ESC is 0x1b. The AnsiWriter emits combined fg+bg SGR sequences
+    # (ESC [ 38;2;R;G;B;48;2;R;G;B m), so we can't require a trailing `m` —
+    # just match the truecolor introducer ESC [ 38;2;<n> (or 48;2).
+    if head -c 65536 "$path" | LC_ALL=C grep -aqE $'\x1b\\[[34]8;2;[0-9]+'; then
+        printf '%s stdout contains ANSI truecolor SGR sequences\n' "$E2E_PASS"
     else
-        printf '%s stdout has no kitty APC frame header\n' "$E2E_FAIL"
+        printf '%s stdout has no ANSI truecolor SGR sequences\n' "$E2E_FAIL"
         return 1
     fi
 }

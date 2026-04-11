@@ -116,10 +116,21 @@ fn main() -> Result<()> {
 
     // Raw mode + stdin reader for keypress handling. Restored on Drop
     // so the user doesn't end up with a wedged terminal if the loop
-    // panics.
+    // panics. When stdin isn't a tty (piped output, CI, redirect) the
+    // guard is `None` and we skip spawning the keypress thread — the
+    // render loop still runs and exits on SIGINT.
     let _raw = RawStdin::enable().context("enable raw stdin")?;
+    let interactive = _raw.is_some();
     let (key_tx, key_rx) = mpsc::channel::<AppKey>();
-    spawn_keypress_thread(Arc::clone(&app_stop), key_tx);
+    if interactive {
+        spawn_keypress_thread(Arc::clone(&app_stop), key_tx);
+    } else {
+        drop(key_tx);
+        tracing::info!(
+            target: "clitunes",
+            "stdin is not a tty — running non-interactively (piped output / CI)"
+        );
+    }
 
     let format = PcmFormat::STUDIO;
     let ring = PcmRing::new(format, RING_FRAMES);
@@ -553,12 +564,16 @@ struct RawStdin {
 }
 
 impl RawStdin {
-    fn enable() -> Result<Self> {
+    /// Put stdin into cbreak mode. Returns `Ok(None)` when stdin is not
+    /// a tty (pipe, file redirect, CI runner) so the caller can proceed
+    /// without interactive keypresses instead of bailing out — this is
+    /// what makes `clitunes > render.log` and the e2e harness work.
+    fn enable() -> Result<Option<Self>> {
         let fd = io::stdin().as_raw_fd();
         unsafe {
             let mut saved: libc::termios = std::mem::zeroed();
             if libc::tcgetattr(fd, &mut saved) != 0 {
-                return Err(anyhow::anyhow!("tcgetattr failed: stdin is not a tty"));
+                return Ok(None);
             }
             let mut raw = saved;
             // cbreak: no echo, no canonical line buffering, but keep signals
@@ -570,7 +585,7 @@ impl RawStdin {
             if libc::tcsetattr(fd, libc::TCSANOW, &raw) != 0 {
                 return Err(anyhow::anyhow!("tcsetattr failed"));
             }
-            Ok(Self { fd, saved })
+            Ok(Some(Self { fd, saved }))
         }
     }
 }

@@ -2,6 +2,16 @@
 //!
 //! Connects to `clitunesd` over a Unix socket control bus, reads PCM via
 //! shared-memory SPMC ring, and renders visualisers at 30 fps.
+//!
+//! Dispatch modes:
+//! - `clitunes` (no subcommand)        → full TUI with picker + carousel
+//! - `clitunes --pane <name>`          → standalone single-component pane
+//! - `clitunes play|pause|next|prev`   → headless one-shot verb
+//! - `clitunes volume <0-100>`         → headless volume
+//! - `clitunes viz <name>`             → headless viz switch
+//! - `clitunes source radio <uuid>`    → headless source switch
+//! - `clitunes source local <path>`    → headless source switch
+//! - `clitunes status [--json]`        → one-shot status query
 
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -23,25 +33,17 @@ use clitunes_engine::tui::persistence::{
 };
 
 fn main() -> Result<()> {
-    observability::init_tracing("clitunes")?;
+    let mode = CliMode::parse_from_env()?;
 
-    let cli = CliArgs::parse_from_env()?;
+    if let CliMode::Help = mode {
+        print_help();
+        return Ok(());
+    }
+
+    observability::init_tracing("clitunes")?;
 
     let app_stop = Arc::new(AtomicBool::new(false));
     install_signal_handler(Arc::clone(&app_stop))?;
-
-    let state_path = default_state_path();
-    let previous_state = match state_path.as_ref().map(|p| load_state(p)).transpose()? {
-        Some(Recovery::Loaded(s)) => Some(s),
-        Some(Recovery::Corrupt(reason)) => {
-            tracing::warn!(target: "clitunes", %reason, "state.toml corrupt; starting fresh");
-            if let Some(p) = state_path.as_ref() {
-                let _ = std::fs::remove_file(p);
-            }
-            None
-        }
-        Some(Recovery::Missing) | None => None,
-    };
 
     let connected = auto_spawn::connect_or_spawn().context("connect to daemon")?;
     let socket_path = connected.socket_path.clone();
@@ -56,20 +58,33 @@ fn main() -> Result<()> {
         .build()
         .context("build tokio runtime")?;
 
-    rt.block_on(run_client(
-        cli,
-        socket_path,
-        previous_state,
-        state_path,
-        app_stop,
-    ))
+    match mode {
+        CliMode::FullTui(cli) => rt.block_on(run_full_tui(cli, socket_path, app_stop)),
+        CliMode::Pane { name, viz } => rt.block_on(run_pane(name, viz, socket_path, app_stop)),
+        CliMode::Headless(verb) => rt.block_on(run_headless(verb, &socket_path)),
+        CliMode::StatusJson => rt.block_on(run_status_json(&socket_path)),
+        CliMode::Help => unreachable!(),
+    }
 }
 
-async fn run_client(
-    cli: CliArgs,
+// ─── dispatch: headless verb ───────────────────────────────────────
+
+async fn run_headless(verb: Verb, socket_path: &std::path::Path) -> Result<()> {
+    clitunes::client::headless::dispatch(socket_path, verb).await
+}
+
+// ─── dispatch: status --json ───────────────────────────────────────
+
+async fn run_status_json(socket_path: &std::path::Path) -> Result<()> {
+    clitunes::client::status_json::run(socket_path).await
+}
+
+// ─── dispatch: pane mode ───────────────────────────────────────────
+
+async fn run_pane(
+    pane_name: String,
+    viz_name: Option<String>,
     socket_path: PathBuf,
-    previous_state: Option<State>,
-    state_path: Option<PathBuf>,
     stop: Arc<AtomicBool>,
 ) -> Result<()> {
     let mut session = ReconnectingSession::connect(socket_path)
@@ -78,30 +93,68 @@ async fn run_client(
 
     session.request_status().await?;
 
-    let mut pcm_tap = None;
-    for _ in 0..50 {
-        match session.recv_event_timeout(Duration::from_millis(100)).await {
-            Some(Event::PcmTap {
-                shm_name,
-                sample_rate,
-                channels,
-                capacity,
-            }) => {
-                tracing::info!(
-                    target: "clitunes",
-                    %shm_name, sample_rate, channels, capacity,
-                    "received PcmTap"
-                );
-                pcm_tap = Some((shm_name, sample_rate));
+    let (shm_name, sample_rate) = wait_pcm_tap(&mut session).await?;
+
+    let (_region, consumer) = ShmRegion::open_consumer(&shm_name)
+        .map_err(|e| anyhow::anyhow!("open SPMC consumer '{shm_name}': {e}"))?;
+
+    let (event_tx, event_rx) = std::sync::mpsc::channel::<Event>();
+    let bridge_stop = Arc::clone(&stop);
+    tokio::spawn(async move {
+        loop {
+            match session.recv_event().await {
+                Some(ev) => {
+                    if event_tx.send(ev).is_err() {
+                        break;
+                    }
+                }
+                None => break,
+            }
+            if bridge_stop.load(Ordering::Relaxed) {
                 break;
             }
-            Some(_) => {}
-            None => {}
         }
-    }
+    });
 
-    let (shm_name, sample_rate) =
-        pcm_tap.ok_or_else(|| anyhow::anyhow!("daemon did not send PcmTap within 5s"))?;
+    let pane_stop = Arc::clone(&stop);
+    let config = clitunes::client::pane_mode::PaneModeConfig {
+        pane_name,
+        viz_name,
+        consumer: Box::new(consumer),
+        sample_rate,
+        event_rx,
+        stop: pane_stop,
+    };
+
+    let result =
+        tokio::task::spawn_blocking(move || clitunes::client::pane_mode::run_pane(config)).await?;
+    drop(_region);
+    result
+}
+
+// ─── dispatch: full TUI ────────────────────────────────────────────
+
+async fn run_full_tui(cli: TuiArgs, socket_path: PathBuf, stop: Arc<AtomicBool>) -> Result<()> {
+    let state_path = default_state_path();
+    let previous_state = match state_path.as_ref().map(|p| load_state(p)).transpose()? {
+        Some(Recovery::Loaded(s)) => Some(s),
+        Some(Recovery::Corrupt(reason)) => {
+            tracing::warn!(target: "clitunes", %reason, "state.toml corrupt; starting fresh");
+            if let Some(p) = state_path.as_ref() {
+                let _ = std::fs::remove_file(p);
+            }
+            None
+        }
+        Some(Recovery::Missing) | None => None,
+    };
+
+    let mut session = ReconnectingSession::connect(socket_path)
+        .await
+        .context("connect control session")?;
+
+    session.request_status().await?;
+
+    let (shm_name, sample_rate) = wait_pcm_tap(&mut session).await?;
 
     let (_region, consumer) = ShmRegion::open_consumer(&shm_name)
         .map_err(|e| anyhow::anyhow!("open SPMC consumer '{shm_name}': {e}"))?;
@@ -189,6 +242,20 @@ async fn run_client(
     result
 }
 
+async fn wait_pcm_tap(session: &mut ReconnectingSession) -> Result<(String, u32)> {
+    for _ in 0..50 {
+        if let Some(Event::PcmTap {
+            shm_name,
+            sample_rate,
+            ..
+        }) = session.recv_event_timeout(Duration::from_millis(100)).await
+        {
+            return Ok((shm_name, sample_rate));
+        }
+    }
+    anyhow::bail!("daemon did not send PcmTap within 5s")
+}
+
 fn persist_state_best_effort(uuid: &str, path: Option<&std::path::Path>) {
     let Some(path) = path else { return };
     let state = State {
@@ -203,6 +270,8 @@ fn persist_state_best_effort(uuid: &str, path: Option<&std::path::Path>) {
     }
 }
 
+// ─── boot intent (full TUI only) ──────────────────────────────────
+
 enum BootIntent {
     FirstRunShowPicker,
     AutoResume { uuid: String, name: Option<String> },
@@ -211,7 +280,7 @@ enum BootIntent {
 }
 
 impl BootIntent {
-    fn from_cli_and_state(cli: &CliArgs, state: Option<&State>) -> Self {
+    fn from_cli_and_state(cli: &TuiArgs, state: Option<&State>) -> Self {
         match (cli.source, cli.station.as_ref()) {
             (SourceChoice::Tone, _) => BootIntent::CliTone,
             (SourceChoice::Radio, Some(uuid)) => BootIntent::CliStation(uuid.clone()),
@@ -230,6 +299,8 @@ impl BootIntent {
     }
 }
 
+// ─── CLI parsing ───────────────────────────────────────────────────
+
 #[derive(Copy, Clone)]
 enum SourceChoice {
     Tone,
@@ -238,50 +309,154 @@ enum SourceChoice {
 }
 
 #[derive(Clone)]
-struct CliArgs {
+struct TuiArgs {
     source: SourceChoice,
     station: Option<String>,
 }
 
-impl CliArgs {
-    fn parse_from_env() -> Result<Self> {
-        let mut source = SourceChoice::Auto;
-        let mut station: Option<String> = None;
+enum CliMode {
+    Help,
+    FullTui(TuiArgs),
+    Pane { name: String, viz: Option<String> },
+    Headless(Verb),
+    StatusJson,
+}
 
-        let mut args = std::env::args().skip(1);
-        while let Some(arg) = args.next() {
-            match arg.as_str() {
-                "-h" | "--help" => {
-                    print_help();
-                    std::process::exit(0);
-                }
-                "--source" => {
-                    let value = args.next().ok_or_else(|| {
-                        anyhow::anyhow!("--source requires a value (tone|radio|auto)")
-                    })?;
-                    source = match value.as_str() {
-                        "tone" => SourceChoice::Tone,
-                        "radio" => SourceChoice::Radio,
-                        "auto" => SourceChoice::Auto,
-                        other => {
-                            anyhow::bail!(
-                                "unknown --source '{}': expected tone, radio, or auto",
-                                other
-                            );
-                        }
-                    };
-                }
-                "--station" => {
-                    let value = args
-                        .next()
-                        .ok_or_else(|| anyhow::anyhow!("--station requires a UUID"))?;
-                    station = Some(value);
-                }
-                other => anyhow::bail!("unknown argument: {}", other),
-            }
+impl CliMode {
+    fn parse_from_env() -> Result<Self> {
+        let args: Vec<String> = std::env::args().skip(1).collect();
+
+        if args.is_empty() {
+            return Ok(CliMode::FullTui(TuiArgs {
+                source: SourceChoice::Auto,
+                station: None,
+            }));
         }
 
-        Ok(Self { source, station })
+        // Check for --help anywhere
+        if args.iter().any(|a| a == "-h" || a == "--help") {
+            return Ok(CliMode::Help);
+        }
+
+        // Check for --pane
+        if let Some(pos) = args.iter().position(|a| a == "--pane") {
+            let name = args
+                .get(pos + 1)
+                .ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "--pane requires a name: {}",
+                        clitunes::client::pane_mode::PANE_NAMES.join(", ")
+                    )
+                })?
+                .clone();
+            clitunes::client::pane_mode::validate_pane_name(&name)?;
+
+            let mut viz = None;
+            if let Some(vpos) = args.iter().position(|a| a == "--viz") {
+                viz = Some(
+                    args.get(vpos + 1)
+                        .ok_or_else(|| anyhow::anyhow!("--viz requires a visualiser name"))?
+                        .clone(),
+                );
+            }
+
+            return Ok(CliMode::Pane { name, viz });
+        }
+
+        // Subcommand dispatch
+        match args[0].as_str() {
+            "play" => Ok(CliMode::Headless(Verb::Play)),
+            "pause" => Ok(CliMode::Headless(Verb::Pause)),
+            "next" => Ok(CliMode::Headless(Verb::Next)),
+            "prev" => Ok(CliMode::Headless(Verb::Prev)),
+            "volume" => {
+                let level_str = args
+                    .get(1)
+                    .ok_or_else(|| anyhow::anyhow!("volume requires a level (0-100)"))?;
+                let level: u8 = level_str
+                    .parse()
+                    .map_err(|_| anyhow::anyhow!("invalid volume level: {level_str}"))?;
+                if level > 100 {
+                    anyhow::bail!("volume must be 0-100, got {level}");
+                }
+                Ok(CliMode::Headless(Verb::Volume { level }))
+            }
+            "viz" => {
+                let name = args
+                    .get(1)
+                    .ok_or_else(|| {
+                        anyhow::anyhow!("viz requires a name (e.g. auralis, cascade, tideline)")
+                    })?
+                    .clone();
+                Ok(CliMode::Headless(Verb::Viz { name }))
+            }
+            "source" => {
+                let kind = args.get(1).ok_or_else(|| {
+                    anyhow::anyhow!("source requires: radio <uuid> | local <path>")
+                })?;
+                match kind.as_str() {
+                    "radio" => {
+                        let uuid = args
+                            .get(2)
+                            .ok_or_else(|| anyhow::anyhow!("source radio requires a station UUID"))?
+                            .clone();
+                        Ok(CliMode::Headless(Verb::Source(SourceArg::Radio { uuid })))
+                    }
+                    "local" => {
+                        let path = args
+                            .get(2)
+                            .ok_or_else(|| anyhow::anyhow!("source local requires a file path"))?
+                            .clone();
+                        Ok(CliMode::Headless(Verb::Source(SourceArg::Local { path })))
+                    }
+                    other => anyhow::bail!("unknown source type: {other}. Expected: radio, local"),
+                }
+            }
+            "status" => {
+                if args.get(1).map(|a| a.as_str()) == Some("--json") || args.len() == 1 {
+                    Ok(CliMode::StatusJson)
+                } else {
+                    anyhow::bail!("usage: clitunes status [--json]")
+                }
+            }
+            // Legacy full-TUI flags
+            _ => {
+                let mut source = SourceChoice::Auto;
+                let mut station: Option<String> = None;
+                let mut i = 0;
+                while i < args.len() {
+                    match args[i].as_str() {
+                        "--source" => {
+                            let value = args.get(i + 1).ok_or_else(|| {
+                                anyhow::anyhow!("--source requires a value (tone|radio|auto)")
+                            })?;
+                            source = match value.as_str() {
+                                "tone" => SourceChoice::Tone,
+                                "radio" => SourceChoice::Radio,
+                                "auto" => SourceChoice::Auto,
+                                other => {
+                                    anyhow::bail!(
+                                        "unknown --source '{}': expected tone, radio, or auto",
+                                        other
+                                    );
+                                }
+                            };
+                            i += 2;
+                        }
+                        "--station" => {
+                            station = Some(
+                                args.get(i + 1)
+                                    .ok_or_else(|| anyhow::anyhow!("--station requires a UUID"))?
+                                    .clone(),
+                            );
+                            i += 2;
+                        }
+                        other => anyhow::bail!("unknown argument: {other}"),
+                    }
+                }
+                Ok(CliMode::FullTui(TuiArgs { source, station }))
+            }
+        }
     }
 }
 
@@ -291,15 +466,26 @@ fn print_help() {
 clitunes — the Ghostty of TUI music apps
 
 USAGE:
-    clitunes [--source auto|tone|radio] [--station <uuid>]
+    clitunes                                Full TUI with picker + visualiser carousel
+    clitunes --pane <name> [--viz <viz>]    Standalone pane (visualiser, now-playing, mini-spectrum)
+    clitunes play|pause|next|prev           Headless playback control
+    clitunes volume <0-100>                 Set volume
+    clitunes viz <name>                     Switch visualiser
+    clitunes source radio <uuid>            Switch to radio station
+    clitunes source local <path>            Play local file/directory
+    clitunes status [--json]                Print current status as JSON
 
-OPTIONS:
-    --source <auto|tone|radio>  Audio source (default: auto — resume last station or show picker)
+PANE NAMES:
+    visualiser      Fullscreen visualiser (default: plasma, override with --viz)
+    now-playing     Track info strip (1-3 rows)
+    mini-spectrum   Unicode block spectrum bars (1 row, for status lines)
+
+FULL TUI OPTIONS:
+    --source <auto|tone|radio>  Audio source (default: auto — resume last or show picker)
     --station <uuid>            Radio station UUID (used with --source radio)
-    -h, --help                  Show this help
 
-KEYS:
-    ↑ / ↓       move picker selection (or j / k)
+KEYS (full TUI and visualiser pane):
+    \u{2191} / \u{2193}       move picker selection (or j / k)
     enter       confirm picker selection
     s           open / close the station picker
     n / p       next / previous visualiser

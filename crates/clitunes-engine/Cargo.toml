@@ -26,6 +26,10 @@ radio = [
 # only wants the parser / ring / tone source doesn't pull symphonia in.
 decode = ["audio", "dep:symphonia"]
 control = []
+# Daemon runtime: fork/detach, flock singleton, idle-exit timer, log rotation.
+# Gated so clitunesd picks it up (D15-safe: no wgpu/ratatui/crossterm) while the
+# spike binary or any future audio-only tool can omit it.
+daemon = ["control"]
 # Pure-CPU truecolor ANSI cell grid + half-block renderer. No GPU deps; the
 # wgpu+Kitty pipeline was replaced after slice 1 because per-frame readback
 # and base64 transmission dominated CPU and battery.

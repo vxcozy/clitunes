@@ -1,0 +1,16 @@
+[layouts.compact]
+fallback = "minimal"
+
+[layouts.compact.min_size]
+cols = 60
+rows = 18
+
+[layouts.compact.root]
+split = "vertical"
+ratios = [4, 1]
+
+[[layouts.compact.root.children]]
+component = "visualiser"
+
+[[layouts.compact.root.children]]
+component = "now-playing"

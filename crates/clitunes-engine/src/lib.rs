@@ -35,3 +35,6 @@ pub mod visualiser;
 /// `state.toml` to auto-resume. The picker submodule is visualiser-gated
 /// because it paints into `CellGrid`.
 pub mod tui;
+
+#[cfg(feature = "layout")]
+pub mod layout;

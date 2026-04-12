@@ -7,6 +7,6 @@ pub mod client;
 pub mod server;
 
 pub use banner::{ClientBanner, ServerBanner, PROTOCOL_VERSION};
-pub use codec::ControlCodec;
+pub use codec::control_codec;
 pub use events::Event;
 pub use verbs::Verb;

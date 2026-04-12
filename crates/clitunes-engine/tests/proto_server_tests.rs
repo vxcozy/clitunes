@@ -181,7 +181,7 @@ async fn malformed_json_returns_parse_error() {
     tokio::time::sleep(Duration::from_millis(50)).await;
 
     let stream = UnixStream::connect(&path).await.unwrap();
-    let mut framed = Framed::new(stream, clitunes_engine::proto::ControlCodec::new());
+    let mut framed = Framed::new(stream, clitunes_engine::proto::control_codec());
 
     use futures_util::StreamExt;
 

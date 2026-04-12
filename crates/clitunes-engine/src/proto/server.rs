@@ -9,7 +9,7 @@ use tokio::time::{timeout, Duration};
 use tokio_util::codec::Framed;
 
 use super::banner::{ClientBanner, ServerBanner};
-use super::codec::ControlCodec;
+use super::codec::control_codec;
 use super::events::Event;
 use super::verbs::VerbEnvelope;
 
@@ -150,7 +150,7 @@ async fn handle_client(
     verb_tx: VerbSender,
     clients: &Arc<tokio::sync::Mutex<HashMap<u64, ClientHandle>>>,
 ) -> anyhow::Result<()> {
-    let mut framed = Framed::new(stream, ControlCodec::new());
+    let mut framed = Framed::new(stream, control_codec());
 
     let banner = ServerBanner::new(capabilities);
     framed.send(banner.to_line()).await?;

@@ -7,7 +7,7 @@ use tokio::time::{timeout, Duration};
 use tokio_util::codec::Framed;
 
 use super::banner::{ClientBanner, ServerBanner, PROTOCOL_VERSION};
-use super::codec::ControlCodec;
+use super::codec::control_codec;
 use super::events::Event;
 use super::verbs::VerbEnvelope;
 
@@ -27,7 +27,7 @@ impl ControlClient {
         initial_subscriptions: Vec<String>,
     ) -> anyhow::Result<Self> {
         let stream = UnixStream::connect(path).await?;
-        let mut framed = Framed::new(stream, ControlCodec::new());
+        let mut framed = Framed::new(stream, control_codec());
 
         let server_line = match timeout(HANDSHAKE_TIMEOUT, framed.next()).await {
             Ok(Some(Ok(line))) => line,

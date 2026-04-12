@@ -313,6 +313,7 @@ async fn dispatch_verbs(
 ) {
     while let Some((envelope, reply_tx)) = verb_rx.recv().await {
         if stop.load(Ordering::Relaxed) {
+            let _ = reply_tx.try_send(Event::command_err(&envelope.cmd_id, "daemon shutting down"));
             return;
         }
 

@@ -21,6 +21,7 @@ clitunes-engine = { path = "../clitunes-engine", default-features = false, featu
     "radio",
     "decode",
     "local",
+    "spotify",
     "control",
     "daemon",
 ] }

@@ -31,6 +31,19 @@ radio = [
 decode = ["audio", "dep:symphonia"]
 # Local file playback (Slice 4 Unit 14). Recursive folder scan + tag reading.
 local = ["sources", "decode", "dep:lofty", "dep:walkdir"]
+# Spotify playback via librespot (v1.1). Requires `radio` because
+# event_loop.rs unconditionally imports RadioSource and the daemon module
+# gate is cfg(all(feature = "audio", feature = "radio", feature = "decode")).
+spotify = [
+    "radio",
+    "sources",
+    "decode",
+    "dep:librespot-core",
+    "dep:librespot-playback",
+    "dep:librespot-metadata",
+    "dep:librespot-oauth",
+    "dep:rubato",
+]
 control = ["dep:tokio", "dep:tokio-util", "dep:futures-util"]
 # Daemon runtime: fork/detach, flock singleton, idle-exit timer, log rotation.
 # Gated so clitunesd picks it up (D15-safe: no wgpu/ratatui/crossterm) while the
@@ -76,6 +89,13 @@ symphonia = { workspace = true, optional = true }
 
 lofty = { workspace = true, optional = true }
 walkdir = { workspace = true, optional = true }
+
+# Spotify feature deps (v1.1).
+librespot-core = { workspace = true, optional = true }
+librespot-playback = { workspace = true, optional = true }
+librespot-metadata = { workspace = true, optional = true }
+librespot-oauth = { workspace = true, optional = true }
+rubato = { workspace = true, optional = true }
 
 # Control bus (Unit 10). LinesCodec for line-delimited JSON framing.
 tokio-util = { workspace = true, optional = true }

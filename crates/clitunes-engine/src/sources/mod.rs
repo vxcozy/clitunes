@@ -14,6 +14,9 @@ pub mod symphonia_decode;
 #[cfg(feature = "local")]
 pub mod local;
 
+#[cfg(feature = "spotify")]
+pub mod spotify;
+
 pub trait Source: Send {
     fn name(&self) -> &str;
     fn run(&mut self, writer: &mut dyn PcmWriter, stop: &std::sync::atomic::AtomicBool);

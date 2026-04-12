@@ -33,6 +33,7 @@ impl History {
         self.rows.len()
     }
 
+    #[allow(dead_code)]
     pub fn is_empty(&self) -> bool {
         self.rows.is_empty()
     }

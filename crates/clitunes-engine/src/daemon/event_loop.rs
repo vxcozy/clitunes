@@ -14,6 +14,7 @@ use crate::pcm::spmc_ring::ShmRegion;
 use crate::proto::events::{Event, PlayState};
 use crate::proto::server::{ControlServer, VerbReceiver};
 use crate::proto::verbs::{SourceArg, Verb};
+#[cfg(feature = "local")]
 use crate::sources::local::LocalSource;
 use crate::sources::radio::{RadioConfig, RadioSource};
 use crate::sources::tone_source::ToneSource;
@@ -166,8 +167,13 @@ impl DaemonEventLoop {
 #[allow(dead_code)]
 enum SourceCommand {
     PlayTone,
-    PlayRadio { station: Station },
-    PlayLocal { paths: Vec<std::path::PathBuf> },
+    PlayRadio {
+        station: Station,
+    },
+    #[cfg(feature = "local")]
+    PlayLocal {
+        paths: Vec<std::path::PathBuf>,
+    },
 }
 
 fn run_source_pipeline(
@@ -248,6 +254,7 @@ fn run_source_pipeline(
                     }
                 }
             }
+            #[cfg(feature = "local")]
             SourceKind::Local(paths) => match LocalSource::new(paths.clone(), FORMAT.sample_rate) {
                 Ok(mut local) => {
                     let display_path = paths
@@ -283,6 +290,7 @@ fn run_source_pipeline(
             match cmd {
                 SourceCommand::PlayTone => current = SourceKind::Tone,
                 SourceCommand::PlayRadio { station } => current = SourceKind::Radio(station),
+                #[cfg(feature = "local")]
                 SourceCommand::PlayLocal { paths } => current = SourceKind::Local(paths),
             }
         }
@@ -292,6 +300,7 @@ fn run_source_pipeline(
 enum SourceKind {
     Tone,
     Radio(Station),
+    #[cfg(feature = "local")]
     Local(Vec<std::path::PathBuf>),
 }
 
@@ -328,10 +337,18 @@ async fn dispatch_verbs(
                     }
                 }
             }
+            #[cfg(feature = "local")]
             Verb::Source(SourceArg::Local { path }) => {
                 let paths = vec![std::path::PathBuf::from(path)];
                 let _ = source_cmd_tx.send(SourceCommand::PlayLocal { paths });
                 let _ = reply_tx.try_send(Event::command_ok(cmd_id));
+            }
+            #[cfg(not(feature = "local"))]
+            Verb::Source(SourceArg::Local { .. }) => {
+                let _ = reply_tx.try_send(Event::command_err(
+                    cmd_id,
+                    "local file playback not enabled in this build",
+                ));
             }
             Verb::Status => {
                 let _ = reply_tx.try_send(pcm_tap.clone());

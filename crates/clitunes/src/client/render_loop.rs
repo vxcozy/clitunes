@@ -16,8 +16,8 @@ use clitunes_engine::tui::picker::{
     PickerState,
 };
 use clitunes_engine::visualiser::{
-    AnsiWriter, Auralis, CellGrid, Metaballs, Plasma, Ripples, Starfield, TuiContext, Tunnel,
-    Visualiser,
+    AnsiWriter, Auralis, Cascade, CellGrid, Metaballs, Plasma, Ripples, Starfield, Tideline,
+    TuiContext, Tunnel, Visualiser,
 };
 
 const FFT_SIZE: usize = 2048;
@@ -80,6 +80,8 @@ impl RenderLoop {
             Box::new(Metaballs::new()),
             Box::new(Starfield::new()),
             Box::new(Auralis::new()),
+            Box::new(Tideline::new()),
+            Box::new(Cascade::new()),
         ];
         let mut active_idx: usize = 0;
 

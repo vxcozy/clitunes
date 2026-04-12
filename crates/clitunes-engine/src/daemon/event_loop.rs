@@ -164,7 +164,7 @@ impl DaemonEventLoop {
     }
 }
 
-#[allow(dead_code)]
+#[allow(dead_code, clippy::enum_variant_names)]
 enum SourceCommand {
     PlayTone,
     PlayRadio {

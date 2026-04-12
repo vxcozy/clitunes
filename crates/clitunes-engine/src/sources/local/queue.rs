@@ -22,6 +22,7 @@ impl Queue {
     }
 
     /// Advance to the next track. Returns a reference to it.
+    #[allow(clippy::should_implement_trait)]
     pub fn next(&mut self) -> Option<&Track> {
         if let Some(prev) = self.current.take() {
             self.played.push(prev);

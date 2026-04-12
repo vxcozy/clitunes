@@ -79,11 +79,7 @@ impl Visualiser for Cascade {
         // (virt_rows - 1). When history is shorter than the grid, the
         // top virtual rows are black. `first_hist_virt` is the virtual
         // row index at which history row 0 appears.
-        let first_hist_virt = if hist_len >= virt_rows {
-            0
-        } else {
-            virt_rows - hist_len
-        };
+        let first_hist_virt = virt_rows.saturating_sub(hist_len);
         // When history exceeds the grid, skip the oldest rows.
         let hist_skip = hist_len.saturating_sub(virt_rows);
 

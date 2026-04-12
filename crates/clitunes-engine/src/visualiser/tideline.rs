@@ -141,6 +141,7 @@ impl Visualiser for Tideline {
 }
 
 /// Sample one virtual pixel at normalised vertical position `vv`.
+#[allow(clippy::too_many_arguments)]
 fn sample_pixel(
     vv: f32,
     x: f32,

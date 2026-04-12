@@ -32,6 +32,7 @@ pub fn select_layout<'a>(
 }
 
 /// Message to show when no layout fits the terminal.
+#[allow(dead_code)]
 pub fn too_small_message(min_cols: u16, min_rows: u16) -> String {
     format!(
         "clitunes — resize to at least {}x{} to display",

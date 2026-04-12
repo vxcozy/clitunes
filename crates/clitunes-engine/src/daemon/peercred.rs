@@ -118,8 +118,7 @@ mod tests {
     }
 
     #[test]
-    fn my_uid_is_nonzero_in_normal_test() {
-        let uid = my_uid();
-        assert!(uid > 0 || uid == 0, "uid is always valid");
+    fn my_uid_returns_a_value() {
+        let _uid = my_uid();
     }
 }

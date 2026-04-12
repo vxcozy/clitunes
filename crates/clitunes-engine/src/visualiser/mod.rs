@@ -22,6 +22,7 @@ pub use clitunes_core::{SurfaceKind, VisualiserId};
 
 pub mod ansi_writer;
 pub mod auralis;
+pub mod cascade;
 pub mod cell_grid;
 pub mod density_ramp;
 pub mod metaballs;
@@ -29,16 +30,19 @@ pub mod palette;
 pub mod plasma;
 pub mod ripples;
 pub mod starfield;
+pub mod tideline;
 pub mod tunnel;
 
 pub use ansi_writer::AnsiWriter;
 pub use auralis::Auralis;
+pub use cascade::Cascade;
 pub use cell_grid::{Cell, CellGrid, Rgb};
 pub use density_ramp::DensityRamp;
 pub use metaballs::Metaballs;
 pub use plasma::Plasma;
 pub use ripples::Ripples;
 pub use starfield::Starfield;
+pub use tideline::Tideline;
 pub use tunnel::Tunnel;
 
 /// Context passed to a visualiser each frame. The visualiser paints into

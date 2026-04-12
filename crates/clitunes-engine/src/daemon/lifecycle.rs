@@ -133,16 +133,31 @@ pub fn write_pidfile(path: &Path, pid: i32) -> io::Result<()> {
 /// with mode 0700 if it doesn't exist so socket inodes inside it inherit
 /// a private-by-default posture.
 pub fn runtime_dir() -> io::Result<PathBuf> {
-    let base = if let Some(dir) = std::env::var_os("XDG_RUNTIME_DIR") {
+    runtime_dir_from(
+        std::env::var_os("XDG_RUNTIME_DIR"),
+        std::env::var_os("TMPDIR"),
+        std::env::var_os("USER"),
+    )
+}
+
+/// Inner implementation that takes env values as parameters so tests can
+/// exercise the resolution logic without mutating process-global env vars
+/// (which causes flaky failures in parallel `cargo test --workspace` runs).
+fn runtime_dir_from(
+    xdg: Option<std::ffi::OsString>,
+    tmpdir: Option<std::ffi::OsString>,
+    user: Option<std::ffi::OsString>,
+) -> io::Result<PathBuf> {
+    let base = if let Some(dir) = xdg {
         PathBuf::from(dir)
     } else {
-        let tmp = std::env::var_os("TMPDIR")
+        let tmp = tmpdir
             .map(PathBuf::from)
             .unwrap_or_else(|| PathBuf::from("/tmp"));
-        let user = std::env::var_os("USER")
+        let u = user
             .map(|u| u.to_string_lossy().into_owned())
             .unwrap_or_else(|| format!("uid-{}", unsafe { libc::geteuid() }));
-        tmp.join(user)
+        tmp.join(u)
     };
     let dir = base.join("clitunes");
     ensure_dir_700(&dir)?;
@@ -200,55 +215,31 @@ pub fn open_private(path: &Path) -> io::Result<File> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Mutex;
-
-    // Serialise tests that mutate process-global env vars. cargo test
-    // runs test fns on multiple threads by default, and concurrent
-    // setenv / getenv is undefined behaviour on most libc's.
-    static ENV_GUARD: Mutex<()> = Mutex::new(());
 
     #[test]
     fn runtime_dir_uses_xdg_when_set() {
-        let _g = ENV_GUARD.lock().unwrap_or_else(|e| e.into_inner());
         let tmp = tempfile::tempdir().unwrap();
-        let prior_xdg = std::env::var_os("XDG_RUNTIME_DIR");
-        std::env::set_var("XDG_RUNTIME_DIR", tmp.path());
-        let dir = runtime_dir().unwrap();
+        let dir = runtime_dir_from(
+            Some(tmp.path().as_os_str().to_owned()),
+            None,
+            None,
+        )
+        .unwrap();
         assert_eq!(dir, tmp.path().join("clitunes"));
         assert!(dir.exists());
-        if let Some(v) = prior_xdg {
-            std::env::set_var("XDG_RUNTIME_DIR", v);
-        } else {
-            std::env::remove_var("XDG_RUNTIME_DIR");
-        }
     }
 
     #[test]
     fn runtime_dir_falls_back_to_tmp() {
-        let _g = ENV_GUARD.lock().unwrap_or_else(|e| e.into_inner());
         let tmp = tempfile::tempdir().unwrap();
-        let prior_xdg = std::env::var_os("XDG_RUNTIME_DIR");
-        let prior_tmpdir = std::env::var_os("TMPDIR");
-        let prior_user = std::env::var_os("USER");
-        std::env::remove_var("XDG_RUNTIME_DIR");
-        std::env::set_var("TMPDIR", tmp.path());
-        std::env::set_var("USER", "lifecycle-fallback");
-        let dir = runtime_dir().unwrap();
+        let dir = runtime_dir_from(
+            None,
+            Some(tmp.path().as_os_str().to_owned()),
+            Some("lifecycle-fallback".into()),
+        )
+        .unwrap();
         assert_eq!(dir, tmp.path().join("lifecycle-fallback").join("clitunes"));
         assert!(dir.exists());
-        if let Some(v) = prior_xdg {
-            std::env::set_var("XDG_RUNTIME_DIR", v);
-        }
-        if let Some(v) = prior_tmpdir {
-            std::env::set_var("TMPDIR", v);
-        } else {
-            std::env::remove_var("TMPDIR");
-        }
-        if let Some(v) = prior_user {
-            std::env::set_var("USER", v);
-        } else {
-            std::env::remove_var("USER");
-        }
     }
 
     #[test]

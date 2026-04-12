@@ -221,6 +221,7 @@ dependencies = [
  "libc",
  "tempfile",
  "thiserror 2.0.18",
+ "tokio",
  "tracing",
 ]
 
@@ -271,6 +272,7 @@ dependencies = [
  "clitunes-core",
  "clitunes-engine",
  "libc",
+ "tokio",
  "tracing",
  "tracing-subscriber",
 ]

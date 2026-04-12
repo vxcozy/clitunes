@@ -94,6 +94,20 @@ clitunes (client)          clitunesd (daemon)
 - macOS or Linux
 - Audio output device (for the daemon)
 
+## Documentation
+
+Full docs in the [guide/](guide/) directory, organised using the
+[Diataxis](https://diataxis.fr/) framework:
+
+- **[Getting started](guide/tutorials/getting-started.md)** — first launch to music in 2 minutes
+- **[Embed panes](guide/how-to/embed-panes.md)** — tmux, WezTerm, Ghostty layouts
+- **[Play local files](guide/how-to/play-local-files.md)**
+- **[Customise stations](guide/how-to/customise-stations.md)**
+- **[CLI reference](guide/reference/cli.md)** — every flag, verb, and visualiser
+- **[Control bus protocol](guide/reference/control-bus.md)** — JSON wire format
+- **[Architecture](guide/explanation/architecture.md)** — daemon/client split, SPMC ring, D15
+- **[Visualiser design](guide/explanation/visualisers.md)** — rendering pipeline, audio reactivity
+
 ## License
 
 [MIT](LICENSE)

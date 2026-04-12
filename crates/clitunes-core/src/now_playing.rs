@@ -48,6 +48,22 @@ impl NowPlaying {
     }
 
     /// True when no track or station information is present at all.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use clitunes_core::NowPlaying;
+    ///
+    /// // A default NowPlaying has no fields set.
+    /// assert!(NowPlaying::default().is_empty());
+    ///
+    /// // Setting any field makes it non-empty.
+    /// let np = NowPlaying {
+    ///     track_title: Some("Artist - Song".into()),
+    ///     ..Default::default()
+    /// };
+    /// assert!(!np.is_empty());
+    /// ```
     pub fn is_empty(&self) -> bool {
         self.track_title.is_none()
             && self.track_url.is_none()

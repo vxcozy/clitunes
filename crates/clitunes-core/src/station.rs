@@ -1,5 +1,15 @@
 use serde::{Deserialize, Serialize};
 
+/// A newtype wrapper for a radio station UUID string.
+///
+/// # Examples
+///
+/// ```
+/// use clitunes_core::StationUuid;
+///
+/// let uuid = StationUuid::new("550e8400-e29b-41d4-a716-446655440000");
+/// assert_eq!(uuid.as_str(), "550e8400-e29b-41d4-a716-446655440000");
+/// ```
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct StationUuid(pub String);
 

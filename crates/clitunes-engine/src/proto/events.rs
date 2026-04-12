@@ -61,6 +61,20 @@ pub enum PlayState {
 }
 
 impl Event {
+    /// Build a successful command-result event.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use clitunes_engine::proto::events::Event;
+    ///
+    /// let ev = Event::command_ok("cmd-42");
+    /// assert_eq!(ev.topic(), "command");
+    ///
+    /// // The JSON representation omits the `error` field when it is None.
+    /// let json = ev.to_line();
+    /// assert!(!json.contains("error"));
+    /// ```
     pub fn command_ok(cmd_id: impl Into<String>) -> Self {
         Self::CommandResult {
             cmd_id: cmd_id.into(),
@@ -69,6 +83,19 @@ impl Event {
         }
     }
 
+    /// Build a failed command-result event.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use clitunes_engine::proto::events::Event;
+    ///
+    /// let ev = Event::command_err("cmd-99", "unknown verb");
+    /// assert_eq!(ev.topic(), "command");
+    ///
+    /// let json = ev.to_line();
+    /// assert!(json.contains("unknown verb"));
+    /// ```
     pub fn command_err(cmd_id: impl Into<String>, error: impl Into<String>) -> Self {
         Self::CommandResult {
             cmd_id: cmd_id.into(),
@@ -85,6 +112,22 @@ impl Event {
         serde_json::from_str(line)
     }
 
+    /// Returns the subscription topic string for this event, used to route
+    /// events to subscribers.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use clitunes_engine::proto::events::Event;
+    ///
+    /// assert_eq!(Event::command_ok("x").topic(), "command");
+    ///
+    /// let np = Event::NowPlayingChanged {
+    ///     artist: None, title: None, album: None,
+    ///     station: None, raw_stream_title: None,
+    /// };
+    /// assert_eq!(np.topic(), "now_playing");
+    /// ```
     pub fn topic(&self) -> &'static str {
         match self {
             Self::StateChanged { .. } => "state",

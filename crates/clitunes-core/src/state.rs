@@ -17,6 +17,19 @@ pub struct State {
 }
 
 impl State {
+    /// Returns a blank state with no persisted preferences.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use clitunes_core::State;
+    ///
+    /// let state = State::fresh();
+    /// assert!(!state.picker_seen);
+    /// assert!(state.last_station_uuid.is_none());
+    /// assert!(state.last_visualiser.is_none());
+    /// assert!(state.last_layout.is_none());
+    /// ```
     pub const fn fresh() -> Self {
         Self {
             picker_seen: false,

@@ -20,6 +20,33 @@ pub struct Track {
 
 impl Track {
     /// Display title: tag title if available, else filename stem, else "Unknown".
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use std::path::PathBuf;
+    /// use clitunes_core::Track;
+    ///
+    /// // When a title tag is present, it is used.
+    /// let tagged = Track {
+    ///     path: PathBuf::from("/music/song.flac"),
+    ///     title: Some("Roygbiv".into()),
+    ///     artist: None, album: None, album_artist: None,
+    ///     track_num: None, year: None, duration_secs: None,
+    ///     embedded_art: None,
+    /// };
+    /// assert_eq!(tagged.display_title(), "Roygbiv");
+    ///
+    /// // When no title tag exists, the filename stem is used.
+    /// let untagged = Track {
+    ///     path: PathBuf::from("/music/awesome_track.mp3"),
+    ///     title: None,
+    ///     artist: None, album: None, album_artist: None,
+    ///     track_num: None, year: None, duration_secs: None,
+    ///     embedded_art: None,
+    /// };
+    /// assert_eq!(untagged.display_title(), "awesome_track");
+    /// ```
     pub fn display_title(&self) -> &str {
         self.title.as_deref().unwrap_or_else(|| {
             self.path

@@ -70,3 +70,6 @@ symphonia = { workspace = true, optional = true }
 
 # Control bus (Unit 10). LinesCodec for line-delimited JSON framing.
 tokio-util = { workspace = true, optional = true }
+
+[dev-dependencies]
+loom = { workspace = true }

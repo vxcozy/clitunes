@@ -11,6 +11,9 @@
 
 pub mod observability;
 
+#[cfg(unix)]
+pub mod pcm;
+
 #[cfg(all(unix, feature = "daemon"))]
 pub mod daemon;
 

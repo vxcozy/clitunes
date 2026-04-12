@@ -2,11 +2,17 @@
 
 use std::os::unix::fs::PermissionsExt;
 use std::os::unix::net::{UnixListener, UnixStream};
+use std::sync::Mutex;
 
 use clitunes_engine::daemon::{check_peer, my_uid, peer_cred, set_socket_umask, AcceptGuard};
 
+// set_socket_umask() modifies the process-wide umask, which affects tempdir
+// creation in concurrent tests (dirs lose the execute bit → PermissionDenied).
+static TEST_LOCK: Mutex<()> = Mutex::new(());
+
 #[test]
 fn socket_bound_after_umask_is_mode_0600() {
+    let _guard = TEST_LOCK.lock().unwrap();
     let tmp = tempfile::tempdir().unwrap();
     let sock_path = tmp.path().join("test.sock");
 
@@ -21,6 +27,7 @@ fn socket_bound_after_umask_is_mode_0600() {
 
 #[test]
 fn peercred_on_bound_socket_returns_our_uid() {
+    let _guard = TEST_LOCK.lock().unwrap();
     let tmp = tempfile::tempdir().unwrap();
     let sock_path = tmp.path().join("peercred.sock");
 
@@ -35,6 +42,7 @@ fn peercred_on_bound_socket_returns_our_uid() {
 
 #[test]
 fn check_peer_allows_same_uid() {
+    let _guard = TEST_LOCK.lock().unwrap();
     let tmp = tempfile::tempdir().unwrap();
     let sock_path = tmp.path().join("guard.sock");
 
@@ -50,6 +58,7 @@ fn check_peer_allows_same_uid() {
 
 #[test]
 fn runtime_dir_parent_is_0700() {
+    let _guard = TEST_LOCK.lock().unwrap();
     let tmp = tempfile::tempdir().unwrap();
     let prior_xdg = std::env::var_os("XDG_RUNTIME_DIR");
     std::env::set_var("XDG_RUNTIME_DIR", tmp.path());
@@ -68,6 +77,7 @@ fn runtime_dir_parent_is_0700() {
 
 #[test]
 fn stale_socket_is_removed_on_rebind() {
+    let _guard = TEST_LOCK.lock().unwrap();
     let tmp = tempfile::tempdir().unwrap();
     let sock_path = tmp.path().join("stale.sock");
 

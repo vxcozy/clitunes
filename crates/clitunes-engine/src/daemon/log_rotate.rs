@@ -147,7 +147,11 @@ fn drop_and_recreate(file: &mut File, path: &Path, max_backups: usize) -> io::Re
         // max_backups == 0: just drop the main log.
         std::fs::remove_file(path)?;
     }
-    // Reopen a fresh empty main log.
+    // Reopen a fresh empty main log. Re-ensure parent dir exists in case
+    // the filesystem lost it (observed as a flake on CI overlay filesystems).
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
     *file = OpenOptions::new()
         .create(true)
         .append(true)

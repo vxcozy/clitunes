@@ -45,7 +45,8 @@ hickory-resolver = "0.24"
 tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros", "time", "fs", "io-util", "sync", "net"] }
 dirs = "5"
 bytes = "1"
-futures-util = "0.3"
+futures-util = { version = "0.3", features = ["sink"] }
+tokio-util = { version = "0.7", features = ["codec"] }
 
 # Atomic file writes (Slice 2 Unit 8). Used for state.toml so a crash
 # mid-write can't leave a truncated / corrupt file on disk.

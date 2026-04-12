@@ -1,0 +1,25 @@
+# Maintainer: clitunes contributors
+pkgname=clitunes
+pkgver=1.0.0
+pkgrel=1
+pkgdesc="Terminal music player with internet radio and real-time visualisers"
+arch=('x86_64' 'aarch64')
+url="https://github.com/vxcozy/clitunes"
+license=('MIT')
+depends=('alsa-lib')
+makedepends=('cargo' 'pkg-config')
+source=("$pkgname-$pkgver.tar.gz::https://github.com/vxcozy/clitunes/archive/refs/tags/v$pkgver.tar.gz")
+sha256sums=('PLACEHOLDER')
+
+build() {
+  cd "$pkgname-$pkgver"
+  export RUSTUP_TOOLCHAIN=stable
+  cargo build --release -p clitunes -p clitunesd
+}
+
+package() {
+  cd "$pkgname-$pkgver"
+  install -Dm755 "target/release/clitunes" "$pkgdir/usr/bin/clitunes"
+  install -Dm755 "target/release/clitunesd" "$pkgdir/usr/bin/clitunesd"
+  install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+}

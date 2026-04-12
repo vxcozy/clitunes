@@ -96,12 +96,6 @@ pub struct RadioStreamer {
     client: reqwest::Client,
 }
 
-impl Default for RadioStreamer {
-    fn default() -> Self {
-        Self::new().expect("default reqwest client")
-    }
-}
-
 impl RadioStreamer {
     pub fn new() -> Result<Self> {
         let client = reqwest::Client::builder()

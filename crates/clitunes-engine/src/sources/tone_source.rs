@@ -4,7 +4,8 @@ use std::time::Duration;
 
 use clitunes_core::{PcmFormat, StereoFrame};
 
-use crate::audio::{CalibrationTone, PcmRingWriter};
+use crate::audio::ring::PcmWriter;
+use crate::audio::CalibrationTone;
 
 use super::Source;
 
@@ -27,7 +28,7 @@ impl Source for ToneSource {
         "calibration-tone"
     }
 
-    fn run(&mut self, writer: &mut PcmRingWriter, stop: &AtomicBool) {
+    fn run(&mut self, writer: &mut dyn PcmWriter, stop: &AtomicBool) {
         let sr = self.tone.format().sample_rate as f32;
         let block_frames = self.buf.len();
         // Each block carries `block_frames / sr` seconds. Sleep a little less

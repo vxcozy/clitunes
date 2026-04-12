@@ -9,5 +9,5 @@ pub mod tone;
 #[cfg(feature = "audio")]
 pub use cpal_output::{CpalOutput, CpalOutputConfig, NegotiatedFormat};
 pub use fft_tap::{FftSnapshot, FftTap};
-pub use ring::{PcmRing, PcmRingReader, PcmRingWriter};
+pub use ring::{PcmRing, PcmRingReader, PcmRingWriter, PcmWriter};
 pub use tone::CalibrationTone;

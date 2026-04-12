@@ -58,7 +58,7 @@ pub use station_db::StationDb;
 pub use streamer::{OpenedStream, RadioStreamer, StreamHeaders};
 
 #[cfg(feature = "audio")]
-use crate::audio::PcmRingWriter;
+use crate::audio::ring::PcmWriter;
 
 #[cfg(feature = "decode")]
 use crate::sources::symphonia_decode::{decode_stream, DecodeConfig};
@@ -175,7 +175,7 @@ impl Source for RadioSource {
         "radio"
     }
 
-    fn run(&mut self, writer: &mut PcmRingWriter, stop: &AtomicBool) {
+    fn run(&mut self, writer: &mut dyn PcmWriter, stop: &AtomicBool) {
         let url = self.config.station.url_resolved.clone();
         let station_name = self.config.station.name.clone();
         let format = self.config.format;

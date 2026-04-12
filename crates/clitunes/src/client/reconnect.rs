@@ -1,0 +1,113 @@
+use std::path::PathBuf;
+use std::time::Duration;
+
+use anyhow::Result;
+use clitunes_engine::proto::events::Event;
+use clitunes_engine::proto::verbs::Verb;
+use tokio::time::sleep;
+
+use super::control_session::ControlSession;
+use crate::auto_spawn::{self, SpawnConfig};
+
+const RECONNECT_DELAY: Duration = Duration::from_millis(200);
+const MAX_RECONNECT_ATTEMPTS: usize = 5;
+
+pub struct ReconnectingSession {
+    session: ControlSession,
+    socket_path: PathBuf,
+}
+
+impl ReconnectingSession {
+    pub async fn connect(socket_path: PathBuf) -> Result<Self> {
+        let session = ControlSession::connect(&socket_path).await?;
+        Ok(Self {
+            session,
+            socket_path,
+        })
+    }
+
+    pub async fn send_verb(&mut self, verb: Verb) -> Result<()> {
+        self.session.send_verb(verb).await
+    }
+
+    pub async fn request_status(&mut self) -> Result<()> {
+        self.session.request_status().await
+    }
+
+    pub async fn recv_event(&mut self) -> Option<Event> {
+        match self.session.recv_event().await {
+            Some(ev) => Some(ev),
+            None => {
+                tracing::warn!(target: "clitunes", "control socket EOF; attempting reconnect");
+                if self.reconnect_loop().await.is_err() {
+                    return None;
+                }
+                self.session.recv_event().await
+            }
+        }
+    }
+
+    pub async fn recv_event_timeout(&mut self, dur: Duration) -> Option<Event> {
+        self.session.recv_event_timeout(dur).await
+    }
+
+    pub fn socket_path(&self) -> &PathBuf {
+        &self.socket_path
+    }
+
+    async fn reconnect_loop(&mut self) -> Result<()> {
+        for attempt in 1..=MAX_RECONNECT_ATTEMPTS {
+            sleep(RECONNECT_DELAY).await;
+
+            let socket_path = self.socket_path.clone();
+            let spawn_result = tokio::task::spawn_blocking(move || {
+                auto_spawn::connect_or_spawn_at(&socket_path, &SpawnConfig::default())
+            })
+            .await;
+
+            match spawn_result {
+                Ok(Ok(connected)) => {
+                    drop(connected.stream);
+                    match ControlSession::connect(&connected.socket_path).await {
+                        Ok(session) => {
+                            self.session = session;
+                            tracing::info!(target: "clitunes", attempt, "reconnected to daemon");
+                            return Ok(());
+                        }
+                        Err(e) => {
+                            tracing::warn!(
+                                target: "clitunes",
+                                attempt,
+                                error = %e,
+                                "protocol handshake failed after reconnect"
+                            );
+                        }
+                    }
+                }
+                Ok(Err(e)) => {
+                    tracing::warn!(
+                        target: "clitunes",
+                        attempt,
+                        error = %e,
+                        "auto-spawn failed during reconnect"
+                    );
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        target: "clitunes",
+                        attempt,
+                        error = %e,
+                        "reconnect task panicked"
+                    );
+                }
+            }
+        }
+
+        tracing::error!(
+            target: "clitunes",
+            attempts = MAX_RECONNECT_ATTEMPTS,
+            "exhausted reconnect attempts"
+        );
+        anyhow::bail!("reconnect failed after {MAX_RECONNECT_ATTEMPTS} attempts")
+    }
+}

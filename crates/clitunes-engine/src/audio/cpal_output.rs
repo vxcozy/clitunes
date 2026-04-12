@@ -247,7 +247,7 @@ pub fn select_output_config(
                     if range.sample_format() != fmt {
                         continue;
                     }
-                    if let Some(cfg) = range.clone().try_with_sample_rate(target) {
+                    if let Some(cfg) = (*range).try_with_sample_rate(target) {
                         return Some(cfg);
                     }
                 }

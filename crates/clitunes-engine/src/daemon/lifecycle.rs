@@ -219,12 +219,7 @@ mod tests {
     #[test]
     fn runtime_dir_uses_xdg_when_set() {
         let tmp = tempfile::tempdir().unwrap();
-        let dir = runtime_dir_from(
-            Some(tmp.path().as_os_str().to_owned()),
-            None,
-            None,
-        )
-        .unwrap();
+        let dir = runtime_dir_from(Some(tmp.path().as_os_str().to_owned()), None, None).unwrap();
         assert_eq!(dir, tmp.path().join("clitunes"));
         assert!(dir.exists());
     }

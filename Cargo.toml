@@ -15,8 +15,8 @@ exclude = ["crates/clitunes-spike"]
 edition = "2021"
 license = "MIT"
 authors = ["clitunes contributors"]
-repository = "https://github.com/coin/clitunes"
-version = "0.0.1"
+repository = "https://github.com/vxcozy/clitunes"
+version = "1.0.0"
 
 [workspace.dependencies]
 anyhow = "1"

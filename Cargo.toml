@@ -34,7 +34,7 @@ bytemuck = { version = "1.16", features = ["derive"] }
 base64 = "0.22"
 cpal = "0.15"
 realfft = "3"
-ratatui = "0.29"
+ratatui = "0.30"
 crossterm = "0.28"
 libc = "0.2"
 parking_lot = "0.12"

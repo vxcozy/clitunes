@@ -61,11 +61,13 @@ fn opens_a_default_device_or_skips_gracefully() {
     };
 
     let neg = out.negotiated();
-    assert!(neg.channels == 1 || neg.channels == 2, "got {} channels", neg.channels);
     assert!(
-        neg.sample_rate == 48_000
-            || neg.sample_rate == 44_100
-            || neg.sample_rate >= 8_000,
+        neg.channels == 1 || neg.channels == 2,
+        "got {} channels",
+        neg.channels
+    );
+    assert!(
+        neg.sample_rate == 48_000 || neg.sample_rate == 44_100 || neg.sample_rate >= 8_000,
         "unexpected negotiated rate: {}",
         neg.sample_rate
     );

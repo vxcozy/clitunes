@@ -401,10 +401,8 @@ where
     // `device_scratch` holds the resampled frames at the device's
     // native rate. When `ring_rate == device_rate` only `ring_scratch`
     // is used.
-    let mut ring_scratch: Vec<StereoFrame> =
-        vec![StereoFrame::SILENCE; SCRATCH_CAPACITY_FRAMES];
-    let mut device_scratch: Vec<StereoFrame> =
-        vec![StereoFrame::SILENCE; SCRATCH_CAPACITY_FRAMES];
+    let mut ring_scratch: Vec<StereoFrame> = vec![StereoFrame::SILENCE; SCRATCH_CAPACITY_FRAMES];
+    let mut device_scratch: Vec<StereoFrame> = vec![StereoFrame::SILENCE; SCRATCH_CAPACITY_FRAMES];
     let needs_resample = negotiated.sample_rate != PRIMARY_RATE;
     let mut resampler = LinearResampler::new(PRIMARY_RATE, negotiated.sample_rate);
     let channels = negotiated.channels;
@@ -425,8 +423,10 @@ where
                 capacity = SCRATCH_CAPACITY_FRAMES,
                 "cpal callback asked for more frames than scratch capacity — clamping"
             );
-            underruns
-                .fetch_add((device_frames_requested - SCRATCH_CAPACITY_FRAMES) as u64, Ordering::Relaxed);
+            underruns.fetch_add(
+                (device_frames_requested - SCRATCH_CAPACITY_FRAMES) as u64,
+                Ordering::Relaxed,
+            );
             let silence_start = SCRATCH_CAPACITY_FRAMES * samples_per_frame;
             for slot in data[silence_start..].iter_mut() {
                 *slot = T::silence();
@@ -442,8 +442,8 @@ where
             // resampler has enough input to produce exactly
             // `device_frames` outputs.
             let ratio = PRIMARY_RATE as f64 / negotiated.sample_rate as f64;
-            let need_ring = (((device_frames as f64 * ratio).ceil() as usize) + 2)
-                .min(SCRATCH_CAPACITY_FRAMES);
+            let need_ring =
+                (((device_frames as f64 * ratio).ceil() as usize) + 2).min(SCRATCH_CAPACITY_FRAMES);
 
             let got = reader.drain_into(&mut ring_scratch[..need_ring]);
             if got < need_ring {
@@ -597,7 +597,10 @@ mod tests {
             channels,
             SampleRate(min),
             SampleRate(max),
-            SupportedBufferSize::Range { min: 256, max: 4096 },
+            SupportedBufferSize::Range {
+                min: 256,
+                max: 4096,
+            },
             fmt,
         )
     }
@@ -700,7 +703,10 @@ mod tests {
 
     #[test]
     fn write_device_samples_mono_downmix_averages_channels() {
-        let frames = vec![StereoFrame { l: 0.5, r: -0.5 }, StereoFrame { l: 1.0, r: 1.0 }];
+        let frames = vec![
+            StereoFrame { l: 0.5, r: -0.5 },
+            StereoFrame { l: 1.0, r: 1.0 },
+        ];
         let mut out = [0.0f32; 2];
         write_device_samples::<f32>(&frames, 1, &mut out);
         assert_eq!(out, [0.0, 1.0]);

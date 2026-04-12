@@ -28,7 +28,7 @@ use std::time::{Duration, Instant};
 use anyhow::{Context, Result};
 
 use clitunes_core::{PcmFormat, Station};
-use clitunes_engine::audio::{FftTap, PcmRing};
+use clitunes_engine::audio::{CpalOutput, CpalOutputConfig, FftTap, PcmRing};
 use clitunes_engine::observability;
 use clitunes_engine::sources::radio::{resolve_station_blocking, RadioConfig, RadioSource};
 use clitunes_engine::sources::{tone_source::ToneSource, Source};
@@ -134,6 +134,37 @@ fn main() -> Result<()> {
 
     let format = PcmFormat::STUDIO;
     let ring = PcmRing::new(format, RING_FRAMES);
+
+    // Real audio output. Held on the main thread until shutdown — the
+    // cpal Stream handle is !Send on CoreAudio, which is fine because
+    // it never leaves main(). Skipped entirely when stdin isn't a tty
+    // (headless CI, piped runs) so non-interactive invocations don't
+    // claim an OS audio device just to render ANSI to a file. A
+    // device-open failure is logged but never fatal — the visualiser
+    // still runs so the user sees something instead of nothing.
+    let _audio_out: Option<CpalOutput> = if interactive {
+        match CpalOutput::start(ring.reader(), CpalOutputConfig::default()) {
+            Ok(out) => {
+                let neg = out.negotiated();
+                tracing::info!(
+                    target: "clitunes",
+                    device = %neg.device_name,
+                    rate = neg.sample_rate,
+                    channels = neg.channels,
+                    format = ?neg.sample_format,
+                    "audio output: opened"
+                );
+                Some(out)
+            }
+            Err(e) => {
+                tracing::warn!(target: "clitunes", error = %e, "audio output: disabled (device open failed)");
+                None
+            }
+        }
+    } else {
+        tracing::info!(target: "clitunes", "audio output: skipped (non-interactive)");
+        None
+    };
 
     // Resolve-worker → main loop channel. Used for both the CLI
     // `--station <uuid>` path and the auto-resume path from state.toml.

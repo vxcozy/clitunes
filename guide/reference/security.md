@@ -1,13 +1,13 @@
-# clitunes Security Model
+# Security model
 
-## Threat Scope
+## Threat scope
 
 clitunes is a local desktop application. It makes outbound network
 connections (HTTPS to radio-browser.info, HTTP/HTTPS to radio streams)
 but exposes no listening network ports. The only IPC surface is a Unix
 domain socket for daemon control.
 
-## What clitunes Protects Against
+## What clitunes protects against
 
 ### Other local UIDs (multi-user hosts)
 
@@ -67,7 +67,7 @@ advisory database checks. Known advisories are documented with
 justification in `deny.toml`. This narrows (but does not eliminate)
 supply chain risk.
 
-## What clitunes Does NOT Protect Against
+## What clitunes does NOT protect against
 
 ### Root on the same machine
 
@@ -103,7 +103,7 @@ and passes the peercred check. clitunes does not sandbox itself beyond
 the user's own privileges. The threat model assumes the user account
 is trusted.
 
-## Peercred Mechanism
+## Peercred mechanism
 
 ### Linux
 
@@ -133,15 +133,7 @@ getsockopt(fd, SOL_LOCAL, LOCAL_PEERCRED, &cred, &len);
 // cred.cr_uid, cred.cr_groups[0]
 ```
 
-## If Your Runtime Directory Is Not 0700
-
-On some non-standard Linux configurations, `$XDG_RUNTIME_DIR` may not
-exist or may have wrong permissions. clitunes falls back to
-`$TMPDIR/$USER/clitunes/` and creates it with mode 0700. If even
-`$TMPDIR` is shared (unusual), the umask-atomic bind and peercred gate
-still protect the socket.
-
-To verify your socket is secure:
+## Verifying your socket permissions
 
 ```sh
 stat $XDG_RUNTIME_DIR/clitunes/clitunesd.sock

@@ -1,32 +1,43 @@
-# clitunes Control Protocol v1
+# Control bus protocol
 
-Line-delimited JSON over a Unix stream socket at
-`$XDG_RUNTIME_DIR/clitunes/clitunesd.sock` (macOS fallback:
-`$TMPDIR/$USER/clitunes/clitunesd.sock`).
+clitunes uses a line-delimited JSON protocol over a Unix domain socket for
+communication between client and daemon.
 
-Each line is a complete JSON object terminated by `\n`. Max line length:
-**65,536 bytes** (connections sending oversized lines are disconnected).
+## Socket location
 
-## Banner Exchange
+```
+$XDG_RUNTIME_DIR/clitunes/clitunesd.sock    # if XDG_RUNTIME_DIR is set
+$TMPDIR/$USER/clitunes/clitunesd.sock        # fallback
+```
 
-On connect the server sends its banner immediately:
+The socket is created with mode `0600` (umask-atomic bind) and the directory
+with `0700`. The daemon verifies the connecting process UID via `SO_PEERCRED`
+(Linux) or `LOCAL_PEERCRED` (macOS).
+
+## Wire format
+
+Each message is a single JSON object followed by a newline (`\n`). Max line
+length: **65,536 bytes** — connections sending oversized lines are disconnected.
+
+## Banner exchange
+
+On connect the daemon sends its banner immediately:
 
 ```json
 {"version":"clitunes-control-1","capabilities":["radio","local","viz_auralis","viz_tideline"]}
 ```
 
-The client responds with its banner:
+The client responds:
 
 ```json
 {"client":"clitunes-tui","version":"1.0.0","subscribe":["now_playing","state"]}
 ```
 
 Both sides validate the `version` field. On mismatch, both disconnect.
-The `subscribe` array in the client banner is a convenience shortcut for
-initial subscriptions; clients can also subscribe dynamically after
-handshake.
+The `subscribe` array is a convenience shortcut for initial subscriptions;
+clients can also subscribe dynamically after handshake.
 
-## Verbs (client -> daemon)
+## Verbs (client → daemon)
 
 Every verb is wrapped in an envelope with a client-generated `cmd_id`:
 
@@ -36,8 +47,6 @@ Every verb is wrapped in an envelope with a client-generated `cmd_id`:
 
 The daemon echoes the `cmd_id` in its `command_result` response so the
 client can correlate request/response.
-
-### Verb List
 
 | Verb | Args | Description |
 |------|------|-------------|
@@ -56,7 +65,7 @@ client can correlate request/response.
 | `quit` | — | Disconnect cleanly |
 | `capabilities` | — | Query daemon capabilities |
 
-### Example: Change Volume
+### Example: change volume
 
 ```json
 {"cmd_id":"v-42","verb":"volume","args":{"level":75}}
@@ -68,11 +77,9 @@ Response:
 {"event":"command_result","data":{"cmd_id":"v-42","ok":true}}
 ```
 
-## Events (daemon -> client)
+## Events (daemon → client)
 
 Events are only delivered to clients subscribed to the relevant topic.
-
-### Event List
 
 | Event | Topic | Fields |
 |-------|-------|--------|
@@ -93,13 +100,20 @@ Events are only delivered to clients subscribed to the relevant topic.
 - `errors` — source errors
 - `pcm_meta` — PCM format metadata
 
-### Example: Now Playing Event
+### Example: now playing event
 
 ```json
 {"event":"now_playing_changed","data":{"artist":"Boards of Canada","title":"Roygbiv","album":null,"station":"SomaFM","raw_stream_title":"Boards of Canada - Roygbiv"}}
 ```
 
-## Error Handling
+## PCM tap
+
+Audio data is delivered via a shared-memory SPMC (single-producer,
+multi-consumer) ring, not over the socket. The `pcm_meta` event provides the
+shared memory region name for `shm_open(3)`. See
+[Architecture](../explanation/architecture.md) for details.
+
+## Error handling
 
 - **Malformed JSON**: `command_result` with `ok: false` and error message
 - **Unknown verb**: `command_result` with `ok: false`
@@ -107,7 +121,7 @@ Events are only delivered to clients subscribed to the relevant topic.
 - **Handshake timeout (5s)**: connection terminated
 - **Slow client (event queue full)**: connection terminated; other clients unaffected
 
-## Versioning Policy
+## Versioning policy
 
 - **Non-breaking**: adding new verbs or events (clients ignore unknown events)
 - **Breaking**: removing verbs, changing existing verb/event shapes

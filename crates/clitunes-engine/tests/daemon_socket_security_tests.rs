@@ -74,7 +74,10 @@ fn stale_socket_is_removed_on_rebind() {
     let _l1 = UnixListener::bind(&sock_path).unwrap();
     drop(_l1);
 
-    assert!(sock_path.exists(), "socket file should still exist after listener drop");
+    assert!(
+        sock_path.exists(),
+        "socket file should still exist after listener drop"
+    );
 
     std::fs::remove_file(&sock_path).unwrap();
     let _l2 = UnixListener::bind(&sock_path).unwrap();

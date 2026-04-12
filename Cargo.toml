@@ -17,6 +17,8 @@ license = "MIT"
 authors = ["clitunes contributors"]
 repository = "https://github.com/vxcozy/clitunes"
 version = "1.0.0"
+keywords = ["music", "radio", "visualizer", "terminal", "tui"]
+categories = ["command-line-utilities", "multimedia::audio"]
 
 [workspace.dependencies]
 anyhow = "1"

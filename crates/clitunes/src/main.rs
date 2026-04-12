@@ -17,7 +17,7 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
 
@@ -33,6 +33,7 @@ use clitunes_engine::tui::persistence::{
 };
 
 fn main() -> Result<()> {
+    let t0 = Instant::now();
     let mode = CliMode::parse_from_env()?;
 
     if let CliMode::Help = mode {
@@ -46,6 +47,7 @@ fn main() -> Result<()> {
     install_signal_handler(Arc::clone(&app_stop))?;
 
     let connected = auto_spawn::connect_or_spawn().context("connect to daemon")?;
+    let t_daemon = t0.elapsed();
     let socket_path = connected.socket_path.clone();
     if connected.spawned_daemon {
         tracing::info!(target: "clitunes", "spawned daemon");
@@ -59,12 +61,27 @@ fn main() -> Result<()> {
         .context("build tokio runtime")?;
 
     match mode {
-        CliMode::FullTui(cli) => rt.block_on(run_full_tui(cli, socket_path, app_stop)),
+        CliMode::FullTui(cli) => {
+            let startup = if cli.measure_startup {
+                Some(StartupTimings {
+                    t0,
+                    daemon_connected: t_daemon,
+                })
+            } else {
+                None
+            };
+            rt.block_on(run_full_tui(cli, socket_path, app_stop, startup))
+        }
         CliMode::Pane { name, viz } => rt.block_on(run_pane(name, viz, socket_path, app_stop)),
         CliMode::Headless(verb) => rt.block_on(run_headless(verb, &socket_path)),
         CliMode::StatusJson => rt.block_on(run_status_json(&socket_path)),
         CliMode::Help => unreachable!(),
     }
+}
+
+struct StartupTimings {
+    t0: Instant,
+    daemon_connected: Duration,
 }
 
 // ─── dispatch: headless verb ───────────────────────────────────────
@@ -134,7 +151,12 @@ async fn run_pane(
 
 // ─── dispatch: full TUI ────────────────────────────────────────────
 
-async fn run_full_tui(cli: TuiArgs, socket_path: PathBuf, stop: Arc<AtomicBool>) -> Result<()> {
+async fn run_full_tui(
+    cli: TuiArgs,
+    socket_path: PathBuf,
+    stop: Arc<AtomicBool>,
+    startup: Option<StartupTimings>,
+) -> Result<()> {
     let state_path = default_state_path();
     let previous_state = match state_path.as_ref().map(|p| load_state(p)).transpose()? {
         Some(Recovery::Loaded(s)) => Some(s),
@@ -155,6 +177,7 @@ async fn run_full_tui(cli: TuiArgs, socket_path: PathBuf, stop: Arc<AtomicBool>)
     session.request_status().await?;
 
     let (shm_name, sample_rate) = wait_pcm_tap(&mut session).await?;
+    let t_pcm_tap = startup.as_ref().map(|s| s.t0.elapsed());
 
     let (_region, consumer) = ShmRegion::open_consumer(&shm_name)
         .map_err(|e| anyhow::anyhow!("open SPMC consumer '{shm_name}': {e}"))?;
@@ -225,6 +248,17 @@ async fn run_full_tui(cli: TuiArgs, socket_path: PathBuf, stop: Arc<AtomicBool>)
         }
     });
 
+    if let Some(ref s) = startup {
+        let t_render_ready = s.t0.elapsed();
+        eprintln!("startup\tdaemon_ms\tpcm_tap_ms\trender_ready_ms");
+        eprintln!(
+            "clitunes\t{}\t{}\t{}",
+            s.daemon_connected.as_millis(),
+            t_pcm_tap.unwrap_or_default().as_millis(),
+            t_render_ready.as_millis(),
+        );
+    }
+
     let render_stop = Arc::clone(&stop);
     let render_handle = tokio::task::spawn_blocking(move || {
         let mut render = RenderLoop::new(RenderLoopConfig {
@@ -233,6 +267,7 @@ async fn run_full_tui(cli: TuiArgs, socket_path: PathBuf, stop: Arc<AtomicBool>)
             event_rx,
             verb_tx,
             stop: render_stop,
+            measure_startup: startup.is_some(),
         });
         render.run()
     });
@@ -312,6 +347,7 @@ enum SourceChoice {
 struct TuiArgs {
     source: SourceChoice,
     station: Option<String>,
+    measure_startup: bool,
 }
 
 enum CliMode {
@@ -330,6 +366,22 @@ impl CliMode {
             return Ok(CliMode::FullTui(TuiArgs {
                 source: SourceChoice::Auto,
                 station: None,
+                measure_startup: false,
+            }));
+        }
+
+        // Check for --measure-startup anywhere (consumed before subcommand dispatch).
+        let measure_startup = args.iter().any(|a| a == "--measure-startup");
+        let args: Vec<String> = args
+            .into_iter()
+            .filter(|a| a != "--measure-startup")
+            .collect();
+
+        if args.is_empty() {
+            return Ok(CliMode::FullTui(TuiArgs {
+                source: SourceChoice::Auto,
+                station: None,
+                measure_startup,
             }));
         }
 
@@ -454,7 +506,11 @@ impl CliMode {
                         other => anyhow::bail!("unknown argument: {other}"),
                     }
                 }
-                Ok(CliMode::FullTui(TuiArgs { source, station }))
+                Ok(CliMode::FullTui(TuiArgs {
+                    source,
+                    station,
+                    measure_startup,
+                }))
             }
         }
     }
@@ -476,13 +532,14 @@ USAGE:
     clitunes status [--json]                Print current status as JSON
 
 PANE NAMES:
-    visualiser      Fullscreen visualiser (default: plasma, override with --viz)
+    visualiser      Fullscreen visualiser (default: auralis, override with --viz)
     now-playing     Track info strip (1-3 rows)
     mini-spectrum   Unicode block spectrum bars (1 row, for status lines)
 
 FULL TUI OPTIONS:
     --source <auto|tone|radio>  Audio source (default: auto — resume last or show picker)
     --station <uuid>            Radio station UUID (used with --source radio)
+    --measure-startup           Print startup timing breakdown to stderr and exit after first frame
 
 KEYS (full TUI and visualiser pane):
     \u{2191} / \u{2193}       move picker selection (or j / k)

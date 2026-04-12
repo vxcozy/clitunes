@@ -114,9 +114,9 @@ impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for &'static RotatingLog {
 impl Inner {
     fn rotate(&mut self) -> io::Result<()> {
         self.file.flush()?;
-        // Drop the old handle before renaming — on some filesystems
-        // holding the fd across the rename is fine, but the truncate
-        // step below needs a fresh handle anyway.
+        // Sync data to disk before renaming — on CI overlay filesystems
+        // (overlayfs/AUFS) a rename can race with buffered data visibility.
+        self.file.sync_all()?;
         drop_and_recreate(&mut self.file, &self.path, self.max_backups)?;
         self.written = 0;
         Ok(())

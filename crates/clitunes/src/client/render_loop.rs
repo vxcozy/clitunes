@@ -17,7 +17,7 @@ use clitunes_engine::tui::picker::{
 };
 use clitunes_engine::visualiser::{
     AnsiWriter, Auralis, Cascade, CellGrid, Metaballs, Plasma, Ripples, Starfield, Tideline,
-    TuiContext, Tunnel, Visualiser,
+    TuiContext, Tunnel, Visualiser, VisualiserId,
 };
 
 const FFT_SIZE: usize = 2048;
@@ -37,6 +37,7 @@ pub struct RenderLoopConfig {
     pub event_rx: std::sync::mpsc::Receiver<Event>,
     pub verb_tx: tokio::sync::mpsc::Sender<Verb>,
     pub stop: Arc<AtomicBool>,
+    pub measure_startup: bool,
 }
 
 pub struct RenderLoop {
@@ -47,6 +48,7 @@ pub struct RenderLoop {
     event_rx: std::sync::mpsc::Receiver<Event>,
     verb_tx: tokio::sync::mpsc::Sender<Verb>,
     stop: Arc<AtomicBool>,
+    measure_startup: bool,
 }
 
 impl RenderLoop {
@@ -59,6 +61,7 @@ impl RenderLoop {
             event_rx: config.event_rx,
             verb_tx: config.verb_tx,
             stop: config.stop,
+            measure_startup: config.measure_startup,
         }
     }
 
@@ -83,7 +86,10 @@ impl RenderLoop {
             Box::new(Tideline::new()),
             Box::new(Cascade::new()),
         ];
-        let mut active_idx: usize = 0;
+        let mut active_idx: usize = visualisers
+            .iter()
+            .position(|v| v.id() == VisualiserId::Auralis)
+            .unwrap_or(0);
 
         let (curated, curated_outcome) = load_curated(None);
         match &curated_outcome {
@@ -185,6 +191,12 @@ impl RenderLoop {
             writer.flush()?;
 
             frame_idx += 1;
+
+            if self.measure_startup {
+                self.stop.store(true, Ordering::SeqCst);
+                break;
+            }
+
             if frame_idx.is_multiple_of(60) {
                 tracing::debug!(target: "clitunes", frame_idx, "frame stats");
             }

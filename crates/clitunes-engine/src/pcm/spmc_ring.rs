@@ -424,6 +424,64 @@ impl Drop for ShmRegion {
 }
 
 // ---------------------------------------------------------------------------
+// cross_process_api trait impls
+// ---------------------------------------------------------------------------
+
+use super::cross_process_api;
+
+impl cross_process_api::PcmProducer for Producer {
+    fn write_frames(&mut self, frames: &[StereoFrame]) -> usize {
+        Producer::write_frames(self, frames)
+    }
+
+    fn written(&self) -> u64 {
+        Producer::written(self)
+    }
+}
+
+impl cross_process_api::PcmConsumer for Consumer {
+    fn read_frames(&mut self, buf: &mut [StereoFrame]) -> Result<usize, Overrun> {
+        Consumer::read_frames(self, buf)
+    }
+
+    fn cursor(&self) -> u64 {
+        Consumer::cursor(self)
+    }
+
+    fn capacity(&self) -> u32 {
+        Consumer::capacity(self)
+    }
+}
+
+impl cross_process_api::PcmBridge for ShmRegion {
+    type Producer = Producer;
+    type Consumer = Consumer;
+
+    fn create(capacity_frames: u32, sample_rate: u32) -> io::Result<(Self, Producer)> {
+        let uid = unsafe { libc::geteuid() };
+        let name = format!("/clitunes-pcm-v1-{uid}");
+        // Clean up stale shm from a previous crashed daemon.
+        unsafe {
+            let c_name = std::ffi::CString::new(name.as_str()).unwrap();
+            libc::shm_unlink(c_name.as_ptr());
+        }
+        ShmRegion::create(&name, capacity_frames, sample_rate)
+    }
+
+    fn open_consumer(name: &str) -> io::Result<(Self, Consumer)> {
+        ShmRegion::open_consumer(name)
+    }
+
+    fn open_consumer_from_start(name: &str) -> io::Result<(Self, Consumer)> {
+        ShmRegion::open_consumer_from_start(name)
+    }
+
+    fn shm_name(&self) -> &str {
+        self.name.to_str().unwrap_or("")
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Unit tests
 // ---------------------------------------------------------------------------
 

@@ -38,6 +38,12 @@ pub enum Event {
         channels: u8,
         frame_count_total: u64,
     },
+    PcmTap {
+        shm_name: String,
+        sample_rate: u32,
+        channels: u8,
+        capacity: u32,
+    },
     CommandResult {
         cmd_id: String,
         ok: bool,
@@ -89,6 +95,7 @@ impl Event {
             Self::VizChanged { .. } => "state",
             Self::LayoutChanged { .. } => "state",
             Self::PcmMeta { .. } => "pcm_meta",
+            Self::PcmTap { .. } => "pcm_meta",
             Self::CommandResult { .. } => "command",
         }
     }

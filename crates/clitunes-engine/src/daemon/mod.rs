@@ -22,7 +22,9 @@
 pub mod idle_timer;
 pub mod lifecycle;
 pub mod log_rotate;
+pub mod peercred;
 pub mod singleton;
+pub mod socket_security;
 
 pub use idle_timer::{Clock, IdleState, IdleTimer, SystemClock, Tick, DEFAULT_IDLE_WINDOW};
 pub use lifecycle::{
@@ -30,4 +32,6 @@ pub use lifecycle::{
     DetachOutcome,
 };
 pub use log_rotate::{default_log_path, RotatingLog, DEFAULT_MAX_BACKUPS, DEFAULT_MAX_BYTES};
+pub use peercred::{my_uid, peer_cred, PeerCred};
 pub use singleton::{acquire_at, acquire_default, AcquireOutcome, DaemonLock};
+pub use socket_security::{check_peer, AcceptGuard};

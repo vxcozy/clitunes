@@ -11,11 +11,7 @@ fn tmp_socket() -> std::path::PathBuf {
     let dir = std::env::temp_dir().join("clitunes-test");
     std::fs::create_dir_all(&dir).unwrap();
     let n = SOCKET_COUNTER.fetch_add(1, Ordering::SeqCst);
-    dir.join(format!(
-        "reconnect-{}-{}.sock",
-        std::process::id(),
-        n
-    ))
+    dir.join(format!("reconnect-{}-{}.sock", std::process::id(), n))
 }
 
 #[tokio::test]
@@ -85,9 +81,7 @@ async fn reconnecting_session_reconnects_after_server_restart() {
     tokio::spawn(server2.run());
     tokio::time::sleep(Duration::from_millis(50)).await;
 
-    let reconnected = session
-        .recv_event_timeout(Duration::from_secs(3))
-        .await;
+    let reconnected = session.recv_event_timeout(Duration::from_secs(3)).await;
 
     if reconnected.is_some() {
         tokio::time::sleep(Duration::from_millis(50)).await;

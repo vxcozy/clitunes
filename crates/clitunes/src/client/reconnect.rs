@@ -6,8 +6,8 @@ use clitunes_engine::proto::events::Event;
 use clitunes_engine::proto::verbs::Verb;
 use tokio::time::sleep;
 
-use crate::auto_spawn::{self, SpawnConfig};
 use super::control_session::ControlSession;
+use crate::auto_spawn::{self, SpawnConfig};
 
 const RECONNECT_DELAY: Duration = Duration::from_millis(200);
 const MAX_RECONNECT_ATTEMPTS: usize = 5;

@@ -80,10 +80,7 @@ async fn run_client(
 
     let mut pcm_tap = None;
     for _ in 0..50 {
-        match session
-            .recv_event_timeout(Duration::from_millis(100))
-            .await
-        {
+        match session.recv_event_timeout(Duration::from_millis(100)).await {
             Some(Event::PcmTap {
                 shm_name,
                 sample_rate,
@@ -119,17 +116,13 @@ async fn run_client(
                 "auto-resuming last station"
             );
             session
-                .send_verb(Verb::Source(SourceArg::Radio {
-                    uuid: uuid.clone(),
-                }))
+                .send_verb(Verb::Source(SourceArg::Radio { uuid: uuid.clone() }))
                 .await?;
         }
         BootIntent::CliStation(uuid) => {
             tracing::info!(target: "clitunes", %uuid, "playing CLI station");
             session
-                .send_verb(Verb::Source(SourceArg::Radio {
-                    uuid: uuid.clone(),
-                }))
+                .send_verb(Verb::Source(SourceArg::Radio { uuid: uuid.clone() }))
                 .await?;
         }
         BootIntent::FirstRunShowPicker => {

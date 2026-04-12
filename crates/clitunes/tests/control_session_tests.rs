@@ -12,11 +12,7 @@ fn tmp_socket() -> std::path::PathBuf {
     let dir = std::env::temp_dir().join("clitunes-test");
     std::fs::create_dir_all(&dir).unwrap();
     let n = SOCKET_COUNTER.fetch_add(1, Ordering::SeqCst);
-    dir.join(format!(
-        "ctrl-session-{}-{}.sock",
-        std::process::id(),
-        n
-    ))
+    dir.join(format!("ctrl-session-{}-{}.sock", std::process::id(), n))
 }
 
 #[tokio::test]
@@ -137,9 +133,7 @@ async fn control_session_eof_returns_none() {
     server_handle.abort();
     tokio::time::sleep(Duration::from_millis(100)).await;
 
-    let result = session
-        .recv_event_timeout(Duration::from_millis(500))
-        .await;
+    let result = session.recv_event_timeout(Duration::from_millis(500)).await;
     assert!(result.is_none());
 
     std::fs::remove_file(&path).ok();

@@ -14,11 +14,11 @@ use std::thread;
 use std::time::Duration;
 
 use anyhow::{Context, Result};
+use clitunes_engine::daemon::event_loop::DaemonEventLoop;
 use clitunes_engine::daemon::{
     acquire_at, default_log_path, runtime_dir, set_socket_umask, write_pidfile, AcquireOutcome,
     DetachOutcome, IdleTimer, RotatingLog,
 };
-use clitunes_engine::daemon::event_loop::DaemonEventLoop;
 use tracing_subscriber::prelude::*;
 use tracing_subscriber::{fmt, EnvFilter};
 

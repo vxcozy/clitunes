@@ -127,7 +127,14 @@ impl DaemonEventLoop {
         let verb_stop = Arc::clone(&self.stop);
         let verb_ev_tx = event_tx.clone();
         tokio::spawn(async move {
-            dispatch_verbs(&mut verb_rx, &source_cmd_tx, &verb_ev_tx, &pcm_tap, &verb_stop).await;
+            dispatch_verbs(
+                &mut verb_rx,
+                &source_cmd_tx,
+                &verb_ev_tx,
+                &pcm_tap,
+                &verb_stop,
+            )
+            .await;
         });
 
         let idle_check_stop = Arc::clone(&self.stop);
@@ -175,22 +182,20 @@ fn run_source_pipeline(
     let watcher_global = Arc::clone(&stop);
     thread::Builder::new()
         .name("clitunesd-cmd-watcher".into())
-        .spawn(move || {
-            loop {
-                if watcher_global.load(Ordering::Relaxed) {
+        .spawn(move || loop {
+            if watcher_global.load(Ordering::Relaxed) {
+                watcher_stop.store(true, Ordering::SeqCst);
+                return;
+            }
+            match cmd_rx.recv_timeout(Duration::from_millis(100)) {
+                Ok(cmd) => {
+                    *watcher_pending.lock() = Some(cmd);
+                    watcher_stop.store(true, Ordering::SeqCst);
+                }
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => continue,
+                Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
                     watcher_stop.store(true, Ordering::SeqCst);
                     return;
-                }
-                match cmd_rx.recv_timeout(Duration::from_millis(100)) {
-                    Ok(cmd) => {
-                        *watcher_pending.lock() = Some(cmd);
-                        watcher_stop.store(true, Ordering::SeqCst);
-                    }
-                    Err(std::sync::mpsc::RecvTimeoutError::Timeout) => continue,
-                    Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
-                        watcher_stop.store(true, Ordering::SeqCst);
-                        return;
-                    }
                 }
             }
         })
@@ -289,10 +294,8 @@ async fn dispatch_verbs(
                         let _ = reply_tx.try_send(Event::command_ok(cmd_id));
                     }
                     Err(e) => {
-                        let _ = reply_tx.try_send(Event::command_err(
-                            cmd_id,
-                            format!("resolve station: {e}"),
-                        ));
+                        let _ = reply_tx
+                            .try_send(Event::command_err(cmd_id, format!("resolve station: {e}")));
                     }
                 }
             }
@@ -312,17 +315,13 @@ async fn dispatch_verbs(
             }
             Verb::Viz { name } => {
                 let _ = event_tx
-                    .send(Event::VizChanged {
-                        name: name.clone(),
-                    })
+                    .send(Event::VizChanged { name: name.clone() })
                     .await;
                 let _ = reply_tx.try_send(Event::command_ok(cmd_id));
             }
             Verb::Layout { name } => {
                 let _ = event_tx
-                    .send(Event::LayoutChanged {
-                        name: name.clone(),
-                    })
+                    .send(Event::LayoutChanged { name: name.clone() })
                     .await;
                 let _ = reply_tx.try_send(Event::command_ok(cmd_id));
             }
@@ -332,7 +331,8 @@ async fn dispatch_verbs(
             Verb::Next | Verb::Prev => {
                 let _ = reply_tx.try_send(Event::command_ok(cmd_id));
             }
-            Verb::Quit | Verb::Subscribe { .. } | Verb::Unsubscribe { .. } | Verb::Capabilities => {}
+            Verb::Quit | Verb::Subscribe { .. } | Verb::Unsubscribe { .. } | Verb::Capabilities => {
+            }
         }
     }
 }

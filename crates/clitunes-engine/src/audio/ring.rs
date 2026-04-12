@@ -1,19 +1,16 @@
-//! In-process SPSC PCM ring. This is the slice-1 ring. The cross-process
-//! SPMC ring (bead clitunes-wm7) supersedes it in Slice 3.
-//!
-//! Uses an Arc<Mutex<VecDeque>> rather than a lock-free primitive because:
-//! 1. Slice-1 only has one producer (calibration tone or decoder) and one
-//!    consumer (the visualiser FFT tap + the audio output callback).
-//! 2. The producer writes in 256-frame chunks at 48 kHz, so contention is
-//!    vanishingly rare in practice.
-//! 3. Replacing this with rtrb/ringbuf is a 1-day task if measured jitter
-//!    becomes a problem.
+//! In-process SPSC PCM ring and the `PcmWriter` abstraction that lets
+//! sources write to it (or to a tee that fans out to both this ring and
+//! the cross-process SPMC ring).
 
 use std::collections::VecDeque;
 use std::sync::Arc;
 
 use clitunes_core::{PcmFormat, StereoFrame};
 use parking_lot::Mutex;
+
+pub trait PcmWriter: Send {
+    fn write(&mut self, frames: &[StereoFrame]) -> usize;
+}
 
 #[derive(Clone)]
 pub struct PcmRing {
@@ -67,9 +64,6 @@ pub struct PcmRingWriter {
 }
 
 impl PcmRingWriter {
-    /// Writes as many frames as possible; returns the number written. Older
-    /// frames are dropped on overrun (ring acts like a bounded fifo + dropping
-    /// tail on full).
     pub fn write(&mut self, frames: &[StereoFrame]) -> usize {
         let mut buf = self.inner.buf.lock();
         let cap = self.inner.capacity;
@@ -80,6 +74,12 @@ impl PcmRingWriter {
             buf.push_back(f);
         }
         frames.len()
+    }
+}
+
+impl PcmWriter for PcmRingWriter {
+    fn write(&mut self, frames: &[StereoFrame]) -> usize {
+        PcmRingWriter::write(self, frames)
     }
 }
 

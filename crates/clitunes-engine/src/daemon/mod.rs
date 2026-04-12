@@ -19,12 +19,16 @@
 //! — it belongs to Unit 10 — but the idle timer exposes the API that
 //! socket code will call (`on_client_connected` / `on_client_disconnected`).
 
+#[cfg(all(feature = "audio", feature = "radio", feature = "decode"))]
+pub mod event_loop;
 pub mod idle_timer;
 pub mod lifecycle;
 pub mod log_rotate;
 pub mod peercred;
 pub mod singleton;
 pub mod socket_security;
+#[cfg(feature = "audio")]
+pub mod tee_writer;
 
 pub use idle_timer::{Clock, IdleState, IdleTimer, SystemClock, Tick, DEFAULT_IDLE_WINDOW};
 pub use lifecycle::{
@@ -35,3 +39,5 @@ pub use log_rotate::{default_log_path, RotatingLog, DEFAULT_MAX_BACKUPS, DEFAULT
 pub use peercred::{my_uid, peer_cred, PeerCred};
 pub use singleton::{acquire_at, acquire_default, AcquireOutcome, DaemonLock};
 pub use socket_security::{check_peer, AcceptGuard};
+#[cfg(feature = "audio")]
+pub use tee_writer::TeeWriter;

@@ -14,24 +14,14 @@ pub enum Verb {
     Pause,
     Next,
     Prev,
-    Volume {
-        level: u8,
-    },
+    Volume { level: u8 },
     Source(SourceArg),
-    Viz {
-        name: String,
-    },
-    Layout {
-        name: String,
-    },
+    Viz { name: String },
+    Layout { name: String },
     Picker,
     Status,
-    Subscribe {
-        topic: String,
-    },
-    Unsubscribe {
-        topic: String,
-    },
+    Subscribe { topic: String },
+    Unsubscribe { topic: String },
     Quit,
     Capabilities,
 }

@@ -14,7 +14,8 @@ use super::verbs::VerbEnvelope;
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(5);
 
 pub struct ControlClient {
-    sink: futures_util::stream::SplitSink<Framed<UnixStream, tokio_util::codec::LinesCodec>, String>,
+    sink:
+        futures_util::stream::SplitSink<Framed<UnixStream, tokio_util::codec::LinesCodec>, String>,
     event_rx: mpsc::Receiver<Event>,
     server_banner: ServerBanner,
 }

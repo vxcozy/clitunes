@@ -30,10 +30,7 @@ pub struct ControlServer {
 }
 
 impl ControlServer {
-    pub fn bind(
-        path: &Path,
-        capabilities: Vec<String>,
-    ) -> anyhow::Result<(Self, VerbReceiver)> {
+    pub fn bind(path: &Path, capabilities: Vec<String>) -> anyhow::Result<(Self, VerbReceiver)> {
         if path.exists() {
             std::fs::remove_file(path)?;
         }
@@ -99,8 +96,7 @@ impl ControlServer {
             }
         });
 
-        let on_connect: Option<Arc<dyn Fn() + Send + Sync>> =
-            self.on_connect.take().map(Arc::from);
+        let on_connect: Option<Arc<dyn Fn() + Send + Sync>> = self.on_connect.take().map(Arc::from);
         let on_disconnect: Option<Arc<dyn Fn() + Send + Sync>> =
             self.on_disconnect.take().map(Arc::from);
 
@@ -256,10 +252,7 @@ async fn handle_client(
             }
             _ => {
                 if verb_tx.send((envelope, event_tx.clone())).await.is_err() {
-                    let _ = event_tx.try_send(Event::command_err(
-                        &cmd_id,
-                        "daemon shutting down",
-                    ));
+                    let _ = event_tx.try_send(Event::command_err(&cmd_id, "daemon shutting down"));
                     break;
                 }
             }

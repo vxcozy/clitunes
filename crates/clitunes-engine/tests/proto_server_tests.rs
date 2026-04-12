@@ -16,11 +16,7 @@ fn tmp_socket() -> std::path::PathBuf {
     let dir = std::env::temp_dir().join("clitunes-test");
     std::fs::create_dir_all(&dir).unwrap();
     let n = SOCKET_COUNTER.fetch_add(1, AtomicOrdering::SeqCst);
-    dir.join(format!(
-        "test-{}-{}.sock",
-        std::process::id(),
-        n
-    ))
+    dir.join(format!("test-{}-{}.sock", std::process::id(), n))
 }
 
 #[tokio::test]
@@ -32,7 +28,9 @@ async fn banner_exchange_happy_path() {
     tokio::spawn(server.run());
     tokio::time::sleep(Duration::from_millis(50)).await;
 
-    let client = ControlClient::connect(&path, "test-client", vec![]).await.unwrap();
+    let client = ControlClient::connect(&path, "test-client", vec![])
+        .await
+        .unwrap();
     let banner = client.server_banner();
     assert_eq!(banner.version, PROTOCOL_VERSION);
     assert_eq!(banner.capabilities, caps);
@@ -129,7 +127,10 @@ async fn unsubscribed_client_does_not_receive_event() {
     event_tx.send(event).await.unwrap();
 
     let received = client.recv_timeout(Duration::from_millis(200)).await;
-    assert!(received.is_none(), "unsubscribed client should not get event");
+    assert!(
+        received.is_none(),
+        "unsubscribed client should not get event"
+    );
 
     std::fs::remove_file(&path).ok();
 }

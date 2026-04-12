@@ -362,6 +362,54 @@ impl ShmRegion {
             consumer,
         ))
     }
+
+    pub fn open_consumer_from_start(name: &str) -> io::Result<(Self, Consumer)> {
+        use std::ffi::CString;
+
+        let c_name =
+            CString::new(name).map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))?;
+
+        let fd = unsafe { libc::shm_open(c_name.as_ptr(), libc::O_RDONLY, 0) };
+        if fd < 0 {
+            return Err(io::Error::last_os_error());
+        }
+
+        let mut stat: libc::stat = unsafe { std::mem::zeroed() };
+        if unsafe { libc::fstat(fd, &mut stat) } < 0 {
+            let err = io::Error::last_os_error();
+            unsafe { libc::close(fd) };
+            return Err(err);
+        }
+        let len = stat.st_size as usize;
+
+        let ptr = unsafe {
+            libc::mmap(
+                std::ptr::null_mut(),
+                len,
+                libc::PROT_READ,
+                libc::MAP_SHARED,
+                fd,
+                0,
+            )
+        };
+        unsafe { libc::close(fd) };
+
+        if ptr == libc::MAP_FAILED {
+            return Err(io::Error::last_os_error());
+        }
+
+        let consumer = unsafe { Consumer::attach_from_start(ptr as *const u8)? };
+
+        Ok((
+            ShmRegion {
+                name: c_name,
+                ptr: ptr as *mut u8,
+                len,
+                owner: false,
+            },
+            consumer,
+        ))
+    }
 }
 
 impl Drop for ShmRegion {

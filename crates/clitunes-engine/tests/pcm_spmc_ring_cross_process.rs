@@ -23,6 +23,7 @@ use clitunes_engine::pcm::spmc_ring::ShmRegion;
 const ROLE_ENV: &str = "SPMC_TEST_ROLE";
 const SHM_NAME_ENV: &str = "SPMC_SHM_NAME";
 const DURATION_ENV: &str = "SPMC_DURATION_SECS";
+const FROM_START_ENV: &str = "SPMC_FROM_START";
 
 fn deterministic_frame(seq: u64) -> StereoFrame {
     StereoFrame {
@@ -37,10 +38,15 @@ fn run_consumer() {
         .unwrap_or_else(|_| "5".into())
         .parse()
         .unwrap();
+    let from_start = env::var(FROM_START_ENV).is_ok();
 
-    std::thread::sleep(Duration::from_millis(50));
+    let (_region, mut consumer) = if from_start {
+        ShmRegion::open_consumer_from_start(&shm_name).unwrap()
+    } else {
+        ShmRegion::open_consumer(&shm_name).unwrap()
+    };
 
-    let (_region, mut consumer) = ShmRegion::open_consumer(&shm_name).unwrap();
+    println!("READY");
 
     let deadline = Instant::now() + Duration::from_secs(duration_secs);
     let mut total_frames: u64 = 0;
@@ -95,9 +101,37 @@ struct ConsumerResult {
     cursor: u64,
 }
 
+fn wait_for_consumer_ready(
+    child: &mut std::process::Child,
+) -> BufReader<std::process::ChildStdout> {
+    let stdout = child.stdout.take().unwrap();
+    let mut reader = BufReader::new(stdout);
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let mut line = String::new();
+    loop {
+        assert!(
+            Instant::now() < deadline,
+            "timed out waiting for consumer READY"
+        );
+        line.clear();
+        let n = reader.read_line(&mut line).expect("failed to read stdout");
+        if n == 0 {
+            std::thread::sleep(Duration::from_millis(10));
+            continue;
+        }
+        if line.trim() == "READY" {
+            return reader;
+        }
+    }
+}
+
 fn parse_consumer_output(child: &mut std::process::Child) -> ConsumerResult {
     let stdout = child.stdout.take().unwrap();
     let reader = BufReader::new(stdout);
+    parse_consumer_result(reader)
+}
+
+fn parse_consumer_result<R: BufRead>(reader: R) -> ConsumerResult {
     for line in reader.lines() {
         let line = line.unwrap();
         if let Some(rest) = line.strip_prefix("RESULT ") {
@@ -233,9 +267,20 @@ fn cross_process_overrun_recovery() {
 
     let (_region, mut producer) = ShmRegion::create(&shm_name, capacity, sample_rate).unwrap();
 
-    let mut c1 = spawn_consumer("cross_process_overrun_recovery", &shm_name, 3);
+    let mut c1 = Command::new(env::current_exe().unwrap())
+        .env(ROLE_ENV, "consumer")
+        .env(SHM_NAME_ENV, &shm_name)
+        .env(DURATION_ENV, "3")
+        .env(FROM_START_ENV, "1")
+        .arg("cross_process_overrun_recovery")
+        .arg("--exact")
+        .arg("--nocapture")
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("failed to spawn consumer");
 
-    std::thread::sleep(Duration::from_millis(100));
+    let reader = wait_for_consumer_ready(&mut c1);
 
     // Blast frames fast enough to guarantee overrun (consumer sleeps between reads).
     let frames: Vec<_> = (0..2048u64).map(deterministic_frame).collect();
@@ -254,7 +299,7 @@ fn cross_process_overrun_recovery() {
     let status = c1.wait().expect("consumer failed");
     assert!(status.success(), "consumer exited with {status}");
 
-    let r = parse_consumer_output(&mut c1);
+    let r = parse_consumer_result(reader);
     eprintln!(
         "overrun test: frames={} overruns={} cursor={}",
         r.frames, r.overruns, r.cursor

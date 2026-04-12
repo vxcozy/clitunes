@@ -1,0 +1,8 @@
+[layouts.pure]
+
+[layouts.pure.min_size]
+cols = 40
+rows = 10
+
+[layouts.pure.root]
+component = "visualiser"

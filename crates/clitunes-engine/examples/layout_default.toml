@@ -1,0 +1,23 @@
+[layouts.default]
+fallback = "compact"
+
+[layouts.default.min_size]
+cols = 80
+rows = 24
+
+[layouts.default.root]
+split = "horizontal"
+ratios = [3, 1]
+
+[[layouts.default.root.children]]
+split = "vertical"
+ratios = [4, 1]
+
+[[layouts.default.root.children.children]]
+component = "visualiser"
+
+[[layouts.default.root.children.children]]
+component = "now-playing"
+
+[[layouts.default.root.children]]
+component = "source-browser"

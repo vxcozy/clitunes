@@ -1,0 +1,8 @@
+[layouts.fullscreen]
+
+[layouts.fullscreen.min_size]
+cols = 20
+rows = 5
+
+[layouts.fullscreen.root]
+component = "visualiser"

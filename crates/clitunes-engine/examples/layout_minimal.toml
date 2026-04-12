@@ -1,0 +1,9 @@
+[layouts.minimal]
+fallback = "fullscreen"
+
+[layouts.minimal.min_size]
+cols = 40
+rows = 6
+
+[layouts.minimal.root]
+component = "now-playing"

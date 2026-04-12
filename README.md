@@ -105,6 +105,7 @@ Full docs in the [guide/](guide/) directory, organised using the
 - **[Customise stations](guide/how-to/customise-stations.md)**
 - **[CLI reference](guide/reference/cli.md)** — every flag, verb, and visualiser
 - **[Control bus protocol](guide/reference/control-bus.md)** — JSON wire format
+- **[Security model](guide/reference/security.md)** — threat scope, socket hardening, peercred
 - **[Architecture](guide/explanation/architecture.md)** — daemon/client split, SPMC ring, D15
 - **[Visualiser design](guide/explanation/visualisers.md)** — rendering pipeline, audio reactivity
 

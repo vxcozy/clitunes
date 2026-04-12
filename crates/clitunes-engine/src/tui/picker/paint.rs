@@ -48,11 +48,12 @@ use crate::visualiser::cell_grid::{Cell, CellGrid, Rgb};
 const HEADER_PRIMARY: &str = "First time? Pick a starting point.";
 const HEADER_SECONDARY: &str = "You can change it anytime.";
 const FOOTER: &str = "↑/↓ move   enter select   s hide   q quit";
+const FOOTER_VIZ: &str = "n/p cycle viz · auralis · tideline · cascade";
 
 /// Minimum comfortable modal dimensions. See [`paint_picker`] for the
 /// fallback behavior when the grid is smaller.
 pub const MIN_MODAL_W: u16 = 32;
-pub const MIN_MODAL_H: u16 = 18;
+pub const MIN_MODAL_H: u16 = 19;
 pub const MAX_MODAL_W: u16 = 64;
 
 /// Palette. Chosen to be legible on the plasma/auralis backgrounds
@@ -89,7 +90,7 @@ pub fn paint_picker(grid: &mut CellGrid, list: &CuratedList, selected: usize) ->
     let selected = selected.min(list.stations.len().saturating_sub(1));
 
     let modal_w = grid_w.min(MAX_MODAL_W).max(MIN_MODAL_W.min(grid_w));
-    let chrome_min_h: u16 = 6; // border*2 + header*2 + footer*2
+    let chrome_min_h: u16 = 7; // border*2 + header*2 + footer*3
     let visible_body = (grid_h.saturating_sub(chrome_min_h)).min(CURATED_SLOT_COUNT as u16);
     if visible_body == 0 {
         return paint_fallback_banner(grid);
@@ -157,13 +158,22 @@ pub fn paint_picker(grid: &mut CellGrid, list: &CuratedList, selected: usize) ->
     }
 
     // Footer.
-    let footer_y = y1.saturating_sub(2);
+    let footer_y = y1.saturating_sub(3);
     write_centered(
         grid,
         inner_x0,
         inner_w,
         footer_y,
         FOOTER,
+        BODY_DIM_FG,
+        BODY_BG,
+    );
+    write_centered(
+        grid,
+        inner_x0,
+        inner_w,
+        footer_y + 1,
+        FOOTER_VIZ,
         BODY_DIM_FG,
         BODY_BG,
     );

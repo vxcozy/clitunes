@@ -6,7 +6,7 @@ license.workspace = true
 description = "clitunes engine: audio, sources, visualiser, tui, layout, control — feature-gated."
 
 [features]
-default = ["audio", "sources", "radio", "decode", "visualiser", "tui", "control", "layout"]
+default = ["audio", "sources", "radio", "decode", "local", "visualiser", "tui", "control", "layout"]
 
 # Feature boundaries preserve the daemon-must-not-depend-on-visualiser invariant (D15).
 # The clitunesd binary declares `default-features = false, features = ["audio", "control", "sources", "radio", "decode"]`.
@@ -25,6 +25,8 @@ radio = [
 # Symphonia decoder. Gated so the spike binary and any future tooling that
 # only wants the parser / ring / tone source doesn't pull symphonia in.
 decode = ["audio", "dep:symphonia"]
+# Local file playback (Slice 4 Unit 14). Recursive folder scan + tag reading.
+local = ["sources", "decode", "dep:lofty", "dep:walkdir"]
 control = ["dep:tokio", "dep:tokio-util", "dep:futures-util"]
 # Daemon runtime: fork/detach, flock singleton, idle-exit timer, log rotation.
 # Gated so clitunesd picks it up (D15-safe: no wgpu/ratatui/crossterm) while the
@@ -67,6 +69,9 @@ bytes = { workspace = true, optional = true }
 futures-util = { workspace = true, optional = true }
 
 symphonia = { workspace = true, optional = true }
+
+lofty = { workspace = true, optional = true }
+walkdir = { workspace = true, optional = true }
 
 # Control bus (Unit 10). LinesCodec for line-delimited JSON framing.
 tokio-util = { workspace = true, optional = true }

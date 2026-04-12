@@ -16,6 +16,7 @@ clitunes-engine = { path = "../clitunes-engine", default-features = false, featu
     "sources",
     "radio",
     "decode",
+    "local",
     "control",
     "daemon",
 ] }

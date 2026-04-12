@@ -14,6 +14,7 @@ use crate::pcm::spmc_ring::ShmRegion;
 use crate::proto::events::{Event, PlayState};
 use crate::proto::server::{ControlServer, VerbReceiver};
 use crate::proto::verbs::{SourceArg, Verb};
+use crate::sources::local::LocalSource;
 use crate::sources::radio::{RadioConfig, RadioSource};
 use crate::sources::tone_source::ToneSource;
 use crate::sources::Source;
@@ -166,6 +167,7 @@ impl DaemonEventLoop {
 enum SourceCommand {
     PlayTone,
     PlayRadio { station: Station },
+    PlayLocal { paths: Vec<std::path::PathBuf> },
 }
 
 fn run_source_pipeline(
@@ -246,6 +248,31 @@ fn run_source_pipeline(
                     }
                 }
             }
+            SourceKind::Local(paths) => match LocalSource::new(paths.clone(), FORMAT.sample_rate) {
+                Ok(mut local) => {
+                    let display_path = paths
+                        .first()
+                        .map(|p| p.display().to_string())
+                        .unwrap_or_default();
+                    let _ = event_tx.blocking_send(Event::StateChanged {
+                        state: PlayState::Playing,
+                        source: Some("local".into()),
+                        station_or_path: Some(display_path),
+                        position_secs: None,
+                        duration_secs: None,
+                    });
+                    local.run(&mut tee, &source_stop);
+                }
+                Err(e) => {
+                    tracing::error!(target: "clitunesd", error = %e, "local source failed");
+                    let _ = event_tx.blocking_send(Event::SourceError {
+                        source: "local".into(),
+                        error: e.to_string(),
+                    });
+                    current = SourceKind::Tone;
+                    continue;
+                }
+            },
         }
 
         if stop.load(Ordering::Relaxed) {
@@ -256,6 +283,7 @@ fn run_source_pipeline(
             match cmd {
                 SourceCommand::PlayTone => current = SourceKind::Tone,
                 SourceCommand::PlayRadio { station } => current = SourceKind::Radio(station),
+                SourceCommand::PlayLocal { paths } => current = SourceKind::Local(paths),
             }
         }
     }
@@ -264,6 +292,7 @@ fn run_source_pipeline(
 enum SourceKind {
     Tone,
     Radio(Station),
+    Local(Vec<std::path::PathBuf>),
 }
 
 async fn dispatch_verbs(
@@ -299,11 +328,10 @@ async fn dispatch_verbs(
                     }
                 }
             }
-            Verb::Source(SourceArg::Local { .. }) => {
-                let _ = reply_tx.try_send(Event::command_err(
-                    cmd_id,
-                    "local file playback not yet implemented",
-                ));
+            Verb::Source(SourceArg::Local { path }) => {
+                let paths = vec![std::path::PathBuf::from(path)];
+                let _ = source_cmd_tx.send(SourceCommand::PlayLocal { paths });
+                let _ = reply_tx.try_send(Event::command_ok(cmd_id));
             }
             Verb::Status => {
                 let _ = reply_tx.try_send(pcm_tap.clone());

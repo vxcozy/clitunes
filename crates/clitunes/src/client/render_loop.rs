@@ -64,6 +64,13 @@ impl RenderLoop {
 
     pub fn run(&mut self) -> Result<()> {
         let (cells_w, cells_h) = visualiser_cell_rect();
+        tracing::info!(
+            target: "clitunes",
+            cells_w,
+            cells_h,
+            "boot: daemon client → visualiser carousel → ansi"
+        );
+
         let mut grid = CellGrid::new(cells_w, cells_h);
 
         let mut visualisers: Vec<Box<dyn Visualiser>> = vec![
@@ -101,6 +108,10 @@ impl RenderLoop {
             spawn_keypress_thread(Arc::clone(&self.stop), key_tx);
         } else {
             drop(key_tx);
+            tracing::info!(
+                target: "clitunes",
+                "stdin is not a tty — running non-interactively (piped output / CI)"
+            );
         }
 
         let stdout = io::stdout();
@@ -128,9 +139,7 @@ impl RenderLoop {
                                     curated.stations.iter().find(|s| s.slot == slot)
                                 {
                                     picker_state.hide();
-                                    if let Some(uuid) =
-                                        station.url.strip_prefix("radiobrowser:")
-                                    {
+                                    if let Some(uuid) = station.url.strip_prefix("radiobrowser:") {
                                         let _ = self.verb_tx.try_send(Verb::Source(
                                             clitunes_engine::proto::verbs::SourceArg::Radio {
                                                 uuid: uuid.to_owned(),
@@ -142,9 +151,7 @@ impl RenderLoop {
                             PickerAction::Quit => {
                                 self.stop.store(true, Ordering::SeqCst);
                             }
-                            PickerAction::Moved
-                            | PickerAction::Hide
-                            | PickerAction::Ignored => {}
+                            PickerAction::Moved | PickerAction::Hide | PickerAction::Ignored => {}
                         }
                     }
                     AppKey::VizNext => {
@@ -152,20 +159,16 @@ impl RenderLoop {
                         let _ = writer.clear_screen();
                     }
                     AppKey::VizPrev => {
-                        active_idx =
-                            (active_idx + visualisers.len() - 1) % visualisers.len();
+                        active_idx = (active_idx + visualisers.len() - 1) % visualisers.len();
                         let _ = writer.clear_screen();
                     }
                 }
             }
 
-            let n = self
-                .consumer
-                .read_frames(&mut self.pcm_buf)
-                .unwrap_or(0);
-            let snapshot =
-                self.fft
-                    .snapshot_from(&self.pcm_buf[..n.max(1)], self.sample_rate);
+            let n = self.consumer.read_frames(&mut self.pcm_buf).unwrap_or(0);
+            let snapshot = self
+                .fft
+                .snapshot_from(&self.pcm_buf[..n.max(1)], self.sample_rate);
 
             {
                 let mut ctx = TuiContext { grid: &mut grid };
@@ -194,6 +197,12 @@ impl RenderLoop {
         let _ = writer.clear_screen();
         let _ = writer.show_cursor();
         let _ = writer.flush();
+
+        tracing::info!(
+            target: "clitunes",
+            frames = frame_idx,
+            "shutdown"
+        );
 
         Ok(())
     }
@@ -345,8 +354,8 @@ fn visualiser_cell_rect() -> (u16, u16) {
 }
 
 fn terminal_size() -> Option<(u16, u16)> {
-    use std::os::fd::AsRawFd;
     use std::mem::MaybeUninit;
+    use std::os::fd::AsRawFd;
     let stdout = io::stdout();
     let fd = stdout.as_raw_fd();
     unsafe {

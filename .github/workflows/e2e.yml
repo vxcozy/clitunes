@@ -19,8 +19,8 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - name: Build clitunes
-        run: cargo build -p clitunes --release
+      - name: Build clitunes and clitunesd
+        run: cargo build -p clitunes -p clitunesd --release
       - name: Run e2e harness
         run: |
           export CLITUNES_BIN="$GITHUB_WORKSPACE/target/release/clitunes"

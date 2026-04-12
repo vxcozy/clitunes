@@ -1,4 +1,3 @@
-use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::thread;
@@ -6,10 +5,10 @@ use std::time::Duration;
 
 use anyhow::{Context, Result};
 use clitunes_core::{PcmFormat, Station};
+use parking_lot::Mutex;
 use tokio::sync::mpsc;
 
-use crate::audio::ring::PcmWriter;
-use crate::audio::{CpalOutput, CpalOutputConfig, FftTap, PcmRing};
+use crate::audio::{CpalOutput, CpalOutputConfig, PcmRing};
 use crate::pcm::cross_process_api::{PcmBridge, DEFAULT_CAPACITY};
 use crate::pcm::spmc_ring::ShmRegion;
 use crate::proto::events::{Event, PlayState};
@@ -33,7 +32,11 @@ pub struct DaemonEventLoop {
 }
 
 impl DaemonEventLoop {
-    pub fn new(socket_path: std::path::PathBuf, idle: Arc<IdleTimer>, stop: Arc<AtomicBool>) -> Self {
+    pub fn new(
+        socket_path: std::path::PathBuf,
+        idle: Arc<IdleTimer>,
+        stop: Arc<AtomicBool>,
+    ) -> Self {
         Self {
             socket_path,
             idle,
@@ -120,13 +123,11 @@ impl DaemonEventLoop {
             })
             .context("spawn source pipeline")?;
 
-        let stop = Arc::clone(&self.stop);
-        let idle = Arc::clone(&self.idle);
         let pcm_tap = pcm_tap_event.clone();
-        let ev_tx = event_tx.clone();
-
+        let verb_stop = Arc::clone(&self.stop);
+        let verb_ev_tx = event_tx.clone();
         tokio::spawn(async move {
-            dispatch_verbs(&mut verb_rx, &source_cmd_tx, &ev_tx, &pcm_tap, &stop).await;
+            dispatch_verbs(&mut verb_rx, &source_cmd_tx, &verb_ev_tx, &pcm_tap, &verb_stop).await;
         });
 
         let idle_check_stop = Arc::clone(&self.stop);
@@ -136,16 +137,10 @@ impl DaemonEventLoop {
                 if idle_check_stop.load(Ordering::Relaxed) {
                     return;
                 }
-                match idle_ref.tick() {
-                    super::Tick::Expired => {
-                        tracing::info!(
-                            target: "clitunesd",
-                            "idle window elapsed; requesting shutdown"
-                        );
-                        idle_check_stop.store(true, Ordering::SeqCst);
-                        return;
-                    }
-                    _ => {}
+                if let super::Tick::Expired = idle_ref.tick() {
+                    tracing::info!(target: "clitunesd", "idle window elapsed; requesting shutdown");
+                    idle_check_stop.store(true, Ordering::SeqCst);
+                    return;
                 }
                 tokio::time::sleep(Duration::from_millis(500)).await;
             }
@@ -160,10 +155,10 @@ impl DaemonEventLoop {
     }
 }
 
+#[allow(dead_code)]
 enum SourceCommand {
     PlayTone,
     PlayRadio { station: Station },
-    Stop,
 }
 
 fn run_source_pipeline(
@@ -172,23 +167,57 @@ fn run_source_pipeline(
     stop: Arc<AtomicBool>,
     event_tx: mpsc::Sender<Event>,
 ) {
-    let mut tone = ToneSource::new(FORMAT, TONE_BLOCK);
-    tone.run(&mut tee, &stop);
-    let _ = event_tx.blocking_send(Event::StateChanged {
-        state: PlayState::Playing,
-        source: Some("tone".into()),
-        station_or_path: None,
-        position_secs: None,
-        duration_secs: None,
-    });
+    let pending: Arc<Mutex<Option<SourceCommand>>> = Arc::new(Mutex::new(None));
+    let source_stop = Arc::new(AtomicBool::new(false));
 
-    while !stop.load(Ordering::Relaxed) {
-        match cmd_rx.recv_timeout(Duration::from_millis(100)) {
-            Ok(SourceCommand::PlayTone) => {
-                let mut tone = ToneSource::new(FORMAT, TONE_BLOCK);
-                tone.run(&mut tee, &stop);
+    let watcher_pending = Arc::clone(&pending);
+    let watcher_stop = Arc::clone(&source_stop);
+    let watcher_global = Arc::clone(&stop);
+    thread::Builder::new()
+        .name("clitunesd-cmd-watcher".into())
+        .spawn(move || {
+            loop {
+                if watcher_global.load(Ordering::Relaxed) {
+                    watcher_stop.store(true, Ordering::SeqCst);
+                    return;
+                }
+                match cmd_rx.recv_timeout(Duration::from_millis(100)) {
+                    Ok(cmd) => {
+                        *watcher_pending.lock() = Some(cmd);
+                        watcher_stop.store(true, Ordering::SeqCst);
+                    }
+                    Err(std::sync::mpsc::RecvTimeoutError::Timeout) => continue,
+                    Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                        watcher_stop.store(true, Ordering::SeqCst);
+                        return;
+                    }
+                }
             }
-            Ok(SourceCommand::PlayRadio { station }) => {
+        })
+        .expect("spawn cmd watcher");
+
+    let mut current = SourceKind::Tone;
+
+    loop {
+        if stop.load(Ordering::Relaxed) {
+            return;
+        }
+
+        source_stop.store(false, Ordering::SeqCst);
+
+        match &current {
+            SourceKind::Tone => {
+                let _ = event_tx.blocking_send(Event::StateChanged {
+                    state: PlayState::Playing,
+                    source: Some("tone".into()),
+                    station_or_path: None,
+                    position_secs: None,
+                    duration_secs: None,
+                });
+                let mut tone = ToneSource::new(FORMAT, TONE_BLOCK);
+                tone.run(&mut tee, &source_stop);
+            }
+            SourceKind::Radio(station) => {
                 let config = RadioConfig::new(station.clone(), FORMAT);
                 match RadioSource::new(config) {
                     Ok(mut radio) => {
@@ -199,34 +228,37 @@ fn run_source_pipeline(
                             position_secs: None,
                             duration_secs: None,
                         });
-                        radio.run(&mut tee, &stop);
+                        radio.run(&mut tee, &source_stop);
                     }
                     Err(e) => {
-                        tracing::error!(
-                            target: "clitunesd",
-                            error = %e,
-                            "failed to create radio source"
-                        );
+                        tracing::error!(target: "clitunesd", error = %e, "radio source failed");
                         let _ = event_tx.blocking_send(Event::SourceError {
                             source: "radio".into(),
                             error: e.to_string(),
                         });
+                        current = SourceKind::Tone;
+                        continue;
                     }
                 }
             }
-            Ok(SourceCommand::Stop) => {
-                let _ = event_tx.blocking_send(Event::StateChanged {
-                    state: PlayState::Stopped,
-                    source: None,
-                    station_or_path: None,
-                    position_secs: None,
-                    duration_secs: None,
-                });
+        }
+
+        if stop.load(Ordering::Relaxed) {
+            return;
+        }
+
+        if let Some(cmd) = pending.lock().take() {
+            match cmd {
+                SourceCommand::PlayTone => current = SourceKind::Tone,
+                SourceCommand::PlayRadio { station } => current = SourceKind::Radio(station),
             }
-            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => continue,
-            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => return,
         }
     }
+}
+
+enum SourceKind {
+    Tone,
+    Radio(Station),
 }
 
 async fn dispatch_verbs(
@@ -300,9 +332,7 @@ async fn dispatch_verbs(
             Verb::Next | Verb::Prev => {
                 let _ = reply_tx.try_send(Event::command_ok(cmd_id));
             }
-            Verb::Quit | Verb::Subscribe { .. } | Verb::Unsubscribe { .. } | Verb::Capabilities => {
-                // Handled by ControlServer directly
-            }
+            Verb::Quit | Verb::Subscribe { .. } | Verb::Unsubscribe { .. } | Verb::Capabilities => {}
         }
     }
 }

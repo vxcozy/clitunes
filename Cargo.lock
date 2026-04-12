@@ -219,6 +219,8 @@ dependencies = [
  "clitunes-core",
  "clitunes-engine",
  "libc",
+ "tempfile",
+ "thiserror 2.0.18",
  "tracing",
 ]
 
@@ -266,7 +268,9 @@ dependencies = [
  "anyhow",
  "clitunes-core",
  "clitunes-engine",
+ "libc",
  "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]

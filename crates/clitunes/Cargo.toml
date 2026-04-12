@@ -5,6 +5,10 @@ edition.workspace = true
 license.workspace = true
 description = "clitunes — the Ghostty of TUI music apps."
 
+[lib]
+name = "clitunes"
+path = "src/lib.rs"
+
 [[bin]]
 name = "clitunes"
 path = "src/main.rs"
@@ -18,8 +22,13 @@ clitunes-engine = { path = "../clitunes-engine", default-features = false, featu
     "decode",
     "visualiser",
     "control",
+    "daemon",
 ] }
 
 anyhow.workspace = true
+thiserror.workspace = true
 tracing.workspace = true
 libc.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

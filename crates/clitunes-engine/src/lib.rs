@@ -11,6 +11,9 @@
 
 pub mod observability;
 
+#[cfg(all(unix, feature = "daemon"))]
+pub mod daemon;
+
 #[cfg(feature = "audio")]
 pub mod audio;
 

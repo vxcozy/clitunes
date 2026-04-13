@@ -117,6 +117,13 @@ impl CellGrid {
             *slot = cell;
         }
     }
+
+    /// Copy all cells from `other` into `self`. Both grids must have the
+    /// same dimensions, otherwise only the overlapping region is copied.
+    pub fn copy_from(&mut self, other: &CellGrid) {
+        let len = self.cells.len().min(other.cells.len());
+        self.cells[..len].copy_from_slice(&other.cells[..len]);
+    }
 }
 
 #[cfg(test)]

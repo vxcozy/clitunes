@@ -40,6 +40,7 @@
 //! **does** strip non-printable characters defensively in
 //! [`safe_chars`] as a final backstop before writing into the grid.
 
+use crate::tui::components::panel::{draw_panel, PanelStyle};
 use crate::tui::picker::curated_seed::{CuratedList, CURATED_SLOT_COUNT};
 use crate::tui::theme::{Theme, Token};
 use crate::visualiser::cell_grid::{Cell, CellGrid, Rgb};
@@ -74,16 +75,19 @@ pub fn paint_picker(
     selected: usize,
     theme: &Theme,
 ) -> Option<Rect> {
-    let border_fg = theme.get(Token::Border);
     let bg = theme.get(Token::Background);
+    let surface = theme.get(Token::Surface);
     let body_fg = theme.get(Token::Foreground);
     let body_dim_fg = theme.get(Token::ForegroundDim);
-    let select_fg = theme.get(Token::Surface);
-    let select_bg = theme.get(Token::Accent);
     let header_fg = theme.get(Token::ForegroundBright);
+    let accent = theme.get(Token::Accent);
+    let select_text = theme.get(Token::ForegroundBright);
+    let select_row_bg = theme.get(Token::SurfaceBright);
 
     let grid_w = grid.width();
     let grid_h = grid.height();
+
+    let border_fg = theme.get(Token::Border);
 
     // Catastrophically small — one-line banner fallback.
     if grid_w < 20 || grid_h < 6 {
@@ -105,11 +109,15 @@ pub fn paint_picker(
     let x1 = x0 + modal_w;
     let y1 = y0 + modal_h;
 
-    // Fill body bg first — gives us a clean panel over the visualiser.
-    fill_rect(grid, x0, y0, x1, y1, bg);
-
-    // Border.
-    draw_border(grid, x0, y0, x1, y1, border_fg, bg);
+    // Draw panel (fill + border) using the component.
+    let rect = Rect { x0, y0, x1, y1 };
+    let panel_style = PanelStyle {
+        border_fg: Token::Border,
+        border_bg: Token::Background,
+        fill_bg: Token::Surface,
+        corner_radius: true,
+    };
+    draw_panel(grid, rect, &panel_style, theme);
 
     // Header: two centered lines at rows y0+1 and y0+2.
     let inner_x0 = x0 + 2;
@@ -122,7 +130,7 @@ pub fn paint_picker(
         y0 + 1,
         HEADER_PRIMARY,
         header_fg,
-        bg,
+        surface,
     );
     write_centered(
         grid,
@@ -131,7 +139,7 @@ pub fn paint_picker(
         y0 + 2,
         HEADER_SECONDARY,
         body_dim_fg,
-        bg,
+        surface,
     );
 
     // Body rows — scroll so the selected row is visible.
@@ -149,20 +157,32 @@ pub fn paint_picker(
             let is_selected = idx == selected;
             let line = format_row(station, inner_w as usize);
             let (fg, row_bg) = if is_selected {
-                (select_fg, select_bg)
+                (select_text, select_row_bg)
             } else {
-                (body_fg, bg)
+                (body_fg, surface)
             };
             // Fill the whole row with bg first so the selection
             // highlight extends across the full width.
             fill_rect_row(grid, inner_x0, inner_x1, body_y0 + row, row_bg);
             write_text(grid, inner_x0, body_y0 + row, &line, fg, row_bg);
+            // Accent ▸ indicator on the selected row.
+            if is_selected {
+                set_glyph(grid, inner_x0, body_y0 + row, '▸', accent, row_bg);
+            }
         }
     }
 
     // Footer.
     let footer_y = y1.saturating_sub(3);
-    write_centered(grid, inner_x0, inner_w, footer_y, FOOTER, body_dim_fg, bg);
+    write_centered(
+        grid,
+        inner_x0,
+        inner_w,
+        footer_y,
+        FOOTER,
+        body_dim_fg,
+        surface,
+    );
     write_centered(
         grid,
         inner_x0,
@@ -170,7 +190,7 @@ pub fn paint_picker(
         footer_y + 1,
         FOOTER_VIZ,
         body_dim_fg,
-        bg,
+        surface,
     );
 
     Some(Rect { x0, y0, x1, y1 })
@@ -289,22 +309,6 @@ pub fn safe_chars(s: &str) -> String {
     s.chars().filter(|c| !c.is_control()).collect::<String>()
 }
 
-fn fill_rect(grid: &mut CellGrid, x0: u16, y0: u16, x1: u16, y1: u16, bg: Rgb) {
-    for y in y0..y1.min(grid.height()) {
-        for x in x0..x1.min(grid.width()) {
-            grid.set(
-                x,
-                y,
-                Cell {
-                    ch: ' ',
-                    fg: bg,
-                    bg,
-                },
-            );
-        }
-    }
-}
-
 fn fill_rect_row(grid: &mut CellGrid, x0: u16, x1: u16, y: u16, bg: Rgb) {
     if y >= grid.height() {
         return;
@@ -320,29 +324,6 @@ fn fill_rect_row(grid: &mut CellGrid, x0: u16, x1: u16, y: u16, bg: Rgb) {
             },
         );
     }
-}
-
-fn draw_border(grid: &mut CellGrid, x0: u16, y0: u16, x1: u16, y1: u16, fg: Rgb, bg: Rgb) {
-    let w = grid.width();
-    let h = grid.height();
-    if x0 >= w || y0 >= h || x1 <= x0 || y1 <= y0 {
-        return;
-    }
-    let x1i = x1.saturating_sub(1);
-    let y1i = y1.saturating_sub(1);
-
-    for x in (x0 + 1)..x1i {
-        set_glyph(grid, x, y0, '─', fg, bg);
-        set_glyph(grid, x, y1i, '─', fg, bg);
-    }
-    for y in (y0 + 1)..y1i {
-        set_glyph(grid, x0, y, '│', fg, bg);
-        set_glyph(grid, x1i, y, '│', fg, bg);
-    }
-    set_glyph(grid, x0, y0, '╭', fg, bg);
-    set_glyph(grid, x1i, y0, '╮', fg, bg);
-    set_glyph(grid, x0, y1i, '╰', fg, bg);
-    set_glyph(grid, x1i, y1i, '╯', fg, bg);
 }
 
 fn set_glyph(grid: &mut CellGrid, x: u16, y: u16, ch: char, fg: Rgb, bg: Rgb) {
@@ -453,7 +434,7 @@ mod tests {
     }
 
     #[test]
-    fn paint_picker_selection_row_has_highlight_bg() {
+    fn paint_picker_selection_row_has_surface_bright_bg() {
         let mut grid = CellGrid::new(80, 24);
         let list = baked_list();
         let theme = default_theme();
@@ -462,9 +443,27 @@ mod tests {
         // in a ~12-row window scroll is 0, so selection row = y0 + 6.
         let body_y0 = rect.y0 + 3;
         let selection_y = body_y0 + 3;
-        let idx = (selection_y as usize) * 80 + (rect.x0 + 2) as usize;
+        let inner_x0 = rect.x0 + 2;
+        let idx = (selection_y as usize) * 80 + inner_x0 as usize;
         let cell = grid.cells()[idx];
-        assert_eq!(cell.bg, theme.get(Token::Accent));
+        // Selected row uses surface-bright bg with accent ▸ indicator.
+        assert_eq!(cell.bg, theme.get(Token::SurfaceBright));
+        assert_eq!(cell.ch, '▸');
+        assert_eq!(cell.fg, theme.get(Token::Accent));
+    }
+
+    #[test]
+    fn paint_picker_non_selected_row_uses_surface_bg() {
+        let mut grid = CellGrid::new(80, 24);
+        let list = baked_list();
+        let theme = default_theme();
+        let rect = paint_picker(&mut grid, &list, 3, &theme).expect("rect");
+        // Row 0 is not selected (selected = 3).
+        let body_y0 = rect.y0 + 3;
+        let inner_x0 = rect.x0 + 2;
+        let idx = (body_y0 as usize) * 80 + (inner_x0 + 1) as usize;
+        let cell = grid.cells()[idx];
+        assert_eq!(cell.bg, theme.get(Token::Surface));
     }
 
     #[test]

@@ -11,11 +11,14 @@ use clitunes_engine::audio::FftTap;
 use clitunes_engine::pcm::cross_process_api::PcmConsumer;
 use clitunes_engine::proto::events::Event;
 use clitunes_engine::proto::verbs::Verb;
+use clitunes_engine::tui::micro::{BreathingAnimation, ErrorPulse, QuitFade, VolumeOverlay};
 use clitunes_engine::tui::picker::{
     key_from_bytes, load_curated, paint_picker, CuratedLoadOutcome, PickerAction, PickerKey,
-    PickerState,
+    PickerState, PickerTransition,
 };
 use clitunes_engine::tui::theme::Theme;
+
+use crate::client::transition_controller::TransitionController;
 use clitunes_engine::visualiser::{
     AnsiWriter, Auralis, Cascade, CellGrid, Metaballs, Plasma, Ripples, Starfield, Tideline,
     TuiContext, Tunnel, Visualiser, VisualiserId,
@@ -93,6 +96,7 @@ impl RenderLoop {
             .unwrap_or(0);
 
         let theme = Theme::default();
+        let mut transition_ctrl = TransitionController::new();
 
         let (curated, curated_outcome) = load_curated(None);
         match &curated_outcome {
@@ -111,6 +115,12 @@ impl RenderLoop {
         }
         let mut picker_state = PickerState::new(&curated, 0);
         picker_state.show();
+        let mut picker_transition = PickerTransition::start_fade_in();
+        let mut picker_snap = CellGrid::new(cells_w, cells_h);
+        let mut volume_overlay = VolumeOverlay::default();
+        let mut error_pulse = ErrorPulse::default();
+        let mut quit_fade = QuitFade::default();
+        let mut breathing = BreathingAnimation::default();
 
         let _raw = RawStdin::enable().context("enable raw stdin")?;
         let interactive = _raw.is_some();
@@ -137,12 +147,26 @@ impl RenderLoop {
             let frame_start = Instant::now();
 
             while let Ok(ev) = self.event_rx.try_recv() {
-                self.handle_event(&ev, &mut active_idx, &visualisers, &mut picker_state);
+                self.handle_event(
+                    &ev,
+                    &mut active_idx,
+                    &visualisers,
+                    &mut picker_state,
+                    &mut transition_ctrl,
+                    &grid,
+                    &mut volume_overlay,
+                    &mut error_pulse,
+                    &mut breathing,
+                );
             }
 
             while let Ok(key) = key_rx.try_recv() {
+                if quit_fade.is_input_blocked() {
+                    continue;
+                }
                 match key {
                     AppKey::Picker(pk) => {
+                        let was_visible = picker_state.visible;
                         let action = picker_state.handle_key(pk);
                         match action {
                             PickerAction::Pick(slot) => {
@@ -150,6 +174,7 @@ impl RenderLoop {
                                     curated.stations.iter().find(|s| s.slot == slot)
                                 {
                                     picker_state.hide();
+                                    picker_transition = PickerTransition::start_fade_out();
                                     if let Some(uuid) = station.url.strip_prefix("radiobrowser:") {
                                         let _ = self.verb_tx.try_send(Verb::Source(
                                             clitunes_engine::proto::verbs::SourceArg::Radio {
@@ -160,16 +185,25 @@ impl RenderLoop {
                                 }
                             }
                             PickerAction::Quit => {
-                                self.stop.store(true, Ordering::SeqCst);
+                                quit_fade.start();
                             }
-                            PickerAction::Moved | PickerAction::Hide | PickerAction::Ignored => {}
+                            PickerAction::Hide => {
+                                picker_transition = PickerTransition::start_fade_out();
+                            }
+                            PickerAction::Moved if !was_visible && picker_state.visible => {
+                                // Reopened via 's' — fade in.
+                                picker_transition = PickerTransition::start_fade_in();
+                            }
+                            PickerAction::Moved | PickerAction::Ignored => {}
                         }
                     }
                     AppKey::VizNext => {
+                        transition_ctrl.start_viz_switch(&grid, true);
                         active_idx = (active_idx + 1) % visualisers.len();
                         let _ = writer.clear_screen();
                     }
                     AppKey::VizPrev => {
+                        transition_ctrl.start_viz_switch(&grid, false);
                         active_idx = (active_idx + visualisers.len() - 1) % visualisers.len();
                         let _ = writer.clear_screen();
                     }
@@ -186,8 +220,49 @@ impl RenderLoop {
                 visualisers[active_idx].render_tui(&mut ctx, &snapshot);
             }
 
-            if picker_state.visible {
+            // First-launch fade from black.
+            if frame_idx == 0 {
+                transition_ctrl.start_first_launch(cells_w, cells_h);
+            }
+
+            // Apply state transitions (source switch, viz switch, play/pause, first launch).
+            transition_ctrl.apply(&mut grid);
+
+            if picker_transition.should_paint_picker(picker_state.visible) {
+                // Snapshot the visualiser-only frame before painting the picker.
+                picker_snap.copy_from(&grid);
                 let _ = paint_picker(&mut grid, &curated, picker_state.selected, &theme);
+
+                if picker_transition.is_active() {
+                    // Blend between viz-only and viz+picker.
+                    let mut blended = CellGrid::new(cells_w, cells_h);
+                    if let Some(t) = picker_transition.transition() {
+                        if picker_transition.is_fading_out() {
+                            // Fade out: source=picker overlay, target=viz only.
+                            t.apply(&mut blended, &grid, &picker_snap);
+                        } else {
+                            // Fade in: source=viz only, target=picker overlay.
+                            t.apply(&mut blended, &picker_snap, &grid);
+                        }
+                        grid.copy_from(&blended);
+                    }
+                    picker_transition.tick();
+                }
+            }
+
+            // Micro-interactions: volume overlay, breathing, quit fade.
+            volume_overlay.render(&mut grid, &theme);
+            volume_overlay.tick();
+            error_pulse.tick();
+            breathing.tick();
+
+            // Quit fade (last — overrides everything).
+            if quit_fade.is_active() {
+                quit_fade.apply(&mut grid);
+                quit_fade.tick();
+                if quit_fade.is_done() {
+                    self.stop.store(true, Ordering::SeqCst);
+                }
             }
 
             writer.write_frame(&grid)?;
@@ -224,27 +299,56 @@ impl RenderLoop {
         Ok(())
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn handle_event(
         &self,
         event: &Event,
         active_idx: &mut usize,
         visualisers: &[Box<dyn Visualiser>],
         picker_state: &mut PickerState,
+        transition_ctrl: &mut TransitionController,
+        grid: &CellGrid,
+        volume_overlay: &mut VolumeOverlay,
+        error_pulse: &mut ErrorPulse,
+        breathing: &mut BreathingAnimation,
     ) {
         match event {
             Event::VizChanged { name } => {
                 if let Some(idx) = visualisers.iter().position(|v| v.id().as_str() == name) {
+                    transition_ctrl.start_viz_switch(grid, idx > *active_idx);
                     *active_idx = idx;
                 }
             }
             Event::StateChanged {
                 source: Some(source),
+                state,
                 ..
             } if source == "radio" => {
+                transition_ctrl.start_source_switch(grid);
                 picker_state.hide();
+                let paused = matches!(state, clitunes_engine::proto::events::PlayState::Paused);
+                transition_ctrl.set_paused(paused, grid);
+                if paused {
+                    breathing.start();
+                } else {
+                    breathing.stop();
+                }
+            }
+            Event::StateChanged { state, .. } => {
+                let paused = matches!(state, clitunes_engine::proto::events::PlayState::Paused);
+                transition_ctrl.set_paused(paused, grid);
+                if paused {
+                    breathing.start();
+                } else {
+                    breathing.stop();
+                }
+            }
+            Event::VolumeChanged { volume } => {
+                volume_overlay.show(*volume);
             }
             Event::SourceError { error, .. } => {
                 tracing::warn!(target: "clitunes", %error, "source error from daemon");
+                error_pulse.trigger(format!("Source error: {error}"));
                 picker_state.banner =
                     Some(format!("Source error — pick another station. ({error})"));
                 picker_state.show();

@@ -18,6 +18,8 @@
 
 #[cfg(feature = "visualiser")]
 pub mod components;
+#[cfg(feature = "visualiser")]
+pub mod micro;
 pub mod persistence;
 #[cfg(feature = "visualiser")]
 pub mod theme;

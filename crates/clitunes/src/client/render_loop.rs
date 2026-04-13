@@ -11,6 +11,7 @@ use clitunes_engine::audio::FftTap;
 use clitunes_engine::pcm::cross_process_api::PcmConsumer;
 use clitunes_engine::proto::events::Event;
 use clitunes_engine::proto::verbs::{SourceArg, Verb};
+use clitunes_engine::tui::album_art::AlbumArtState;
 use clitunes_engine::tui::micro::{BreathingAnimation, ErrorPulse, QuitFade, VolumeOverlay};
 use clitunes_engine::tui::picker::{
     key_from_bytes, load_curated, paint_picker, CuratedList, CuratedLoadOutcome, PickerAction,
@@ -81,6 +82,9 @@ struct AppState {
     /// Pending debounced search query. Cleared after the `Verb::Search`
     /// is actually dispatched. Holds `(query, dirty_at)`.
     pending_search: Option<(String, Instant)>,
+    /// Album art state. Updated from `NowPlayingChanged.art_url`;
+    /// painted in the top-right of the grid when a cover is loaded.
+    album_art: AlbumArtState,
 }
 
 impl AppState {
@@ -116,6 +120,7 @@ impl AppState {
             breathing: BreathingAnimation::default(),
             frame_idx: 0,
             pending_search: None,
+            album_art: AlbumArtState::new(),
         }
     }
 
@@ -171,6 +176,10 @@ impl AppState {
             Event::VolumeChanged { volume } => {
                 self.volume_overlay.show(*volume);
             }
+            Event::NowPlayingChanged { art_url, .. } => match art_url {
+                Some(url) => self.album_art.request(url),
+                None => self.album_art.clear(),
+            },
             Event::SourceError {
                 error, error_code, ..
             } => {
@@ -490,6 +499,20 @@ impl RenderLoop {
 
             // Apply state transitions (source switch, viz switch, play/pause, first launch).
             state.transition_ctrl.apply(&mut state.grid);
+
+            // Album art: drain any completed fetch, then paint into the
+            // top-right corner (below any picker overlay). 20×10 cells
+            // at roughly a 2:1 cell aspect ratio gives a near-square
+            // cover. Skipped for tiny terminals.
+            state.album_art.poll_ready();
+            const ART_W: u16 = 20;
+            const ART_H: u16 = 10;
+            const ART_PAD: u16 = 1;
+            if cells_w >= ART_W + ART_PAD * 2 && cells_h >= ART_H + ART_PAD * 2 {
+                let x0 = cells_w - ART_W - ART_PAD;
+                let y0 = ART_PAD;
+                state.album_art.paint(&mut state.grid, x0, y0, ART_W, ART_H);
+            }
 
             // Picker overlay with fade transitions.
             if state

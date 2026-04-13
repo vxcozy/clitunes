@@ -30,3 +30,10 @@ pub mod transition;
 
 #[cfg(feature = "visualiser")]
 pub mod picker;
+
+/// Album art rendering (v1.2 Unit 8). Requires both the cell-grid
+/// paint surface (`visualiser`) and the image decoder (`album-art`).
+/// Daemon never enables `album-art`, so the `image` crate is
+/// client-only (D15 invariant).
+#[cfg(all(feature = "visualiser", feature = "album-art"))]
+pub mod album_art;

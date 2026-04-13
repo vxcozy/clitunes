@@ -66,6 +66,25 @@ symphonia = { version = "0.5.5", features = ["mp3", "aac", "isomp4"] }
 lofty = "0.22"
 walkdir = "2"
 
+# Spotify playback (v1.1). librespot is a reverse-engineered Spotify client
+# (MIT licensed, Premium only). rubato provides high-quality sinc resampling
+# for the 44100→48000 Hz bridge.
+librespot-core = { version = "0.8", default-features = false, features = ["rustls-tls-native-roots"] }
+librespot-playback = { version = "0.8", default-features = false, features = ["rustls-tls-native-roots"] }
+librespot-metadata = { version = "0.8", default-features = false, features = ["rustls-tls-native-roots"] }
+librespot-oauth = { version = "0.8", default-features = false, features = ["rustls-tls-native-roots"] }
+rubato = "2"
+
+# Patch librespot crates to dev branch which fixes the vergen-gitcl build
+# conflict (vergen-lib 0.1.6 vs 9.1.0 trait mismatch in build script).
+# See: https://github.com/rustyhorde/vergen/issues/478
+# Remove this patch block when librespot publishes a release with the fix.
+[patch.crates-io]
+librespot-core     = { git = "https://github.com/librespot-org/librespot", branch = "dev" }
+librespot-playback = { git = "https://github.com/librespot-org/librespot", branch = "dev" }
+librespot-metadata = { git = "https://github.com/librespot-org/librespot", branch = "dev" }
+librespot-oauth    = { git = "https://github.com/librespot-org/librespot", branch = "dev" }
+
 [profile.release]
 lto = "thin"
 codegen-units = 1

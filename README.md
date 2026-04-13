@@ -1,6 +1,6 @@
 # clitunes
 
-A terminal music player with internet radio and real-time visualisers.
+A terminal music player with internet radio, Spotify, and real-time visualisers.
 
 Daemon/client architecture — `clitunesd` handles audio while `clitunes` renders
 visualisers at 30 fps using half-block ANSI in any terminal that supports
@@ -39,6 +39,7 @@ clitunes volume 75                # set volume
 clitunes viz auralis              # switch visualiser
 clitunes source radio <uuid>      # tune to a radio station
 clitunes source local <path>      # play a local file or directory
+clitunes source spotify:<uri>     # play a Spotify track (Premium required)
 clitunes status --json            # current state as JSON
 clitunes --pane visualiser        # standalone fullscreen visualiser
 ```
@@ -86,7 +87,10 @@ clitunes (client)          clitunesd (daemon)
 
 - **Shared-memory SPMC ring** delivers PCM to multiple clients with zero copies
 - **Daemon auto-starts** on first `clitunes` invocation, idles down after clients disconnect
-- **State persistence** remembers your last station across sessions
+- **State persistence** remembers your last source across sessions
+- **Spotify playback** via [librespot](https://github.com/librespot-org/librespot)
+  (Premium required) with 44100→48000 Hz sinc resampling and OAuth2 PKCE auth.
+  Spotify Connect receiver planned for v1.2.
 
 ## Requirements
 
@@ -102,6 +106,7 @@ Full docs in the [guide/](guide/) directory, organised using the
 - **[Getting started](guide/tutorials/getting-started.md)** — first launch to music in 2 minutes
 - **[Embed panes](guide/how-to/embed-panes.md)** — tmux, WezTerm, Ghostty layouts
 - **[Play local files](guide/how-to/play-local-files.md)**
+- **[Play Spotify tracks](guide/how-to/play-spotify.md)** — auth, playback, troubleshooting
 - **[Customise stations](guide/how-to/customise-stations.md)**
 - **[CLI reference](guide/reference/cli.md)** — every flag, verb, and visualiser
 - **[Control bus protocol](guide/reference/control-bus.md)** — JSON wire format

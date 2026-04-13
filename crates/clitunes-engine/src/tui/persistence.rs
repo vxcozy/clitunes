@@ -59,6 +59,7 @@ use tempfile::NamedTempFile;
 /// caller. The main binary maps this back to `SourceChoice` itself.
 pub const SOURCE_TONE: &str = "tone";
 pub const SOURCE_RADIO: &str = "radio";
+pub const SOURCE_SPOTIFY: &str = "spotify";
 
 /// Everything clitunes remembers between runs.
 ///
@@ -90,6 +91,10 @@ pub struct State {
     /// Layout id from Slice 3. Present now so Unit 8 + Unit 16 don't
     /// need a schema migration.
     pub last_layout: Option<String>,
+
+    /// Spotify URI last played (e.g. `spotify:track:4PTG3Z6ehGkBFwjybzWkR8`).
+    /// Stored so auto-resume can restart Spotify playback on next launch.
+    pub last_spotify_uri: Option<String>,
 }
 
 impl State {
@@ -104,6 +109,16 @@ impl State {
         }
     }
 
+    /// Convenience constructor for callers that only want to record
+    /// "the user just played this Spotify URI".
+    pub fn with_spotify(uri: impl Into<String>) -> Self {
+        Self {
+            last_spotify_uri: Some(uri.into()),
+            last_source: Some(SOURCE_SPOTIFY.into()),
+            ..Self::default()
+        }
+    }
+
     /// True when there's nothing worth persisting — we skip writes on
     /// an empty state so a ToneSource-only run doesn't create a
     /// zero-content file.
@@ -113,6 +128,7 @@ impl State {
             && self.last_source.is_none()
             && self.last_visualiser.is_none()
             && self.last_layout.is_none()
+            && self.last_spotify_uri.is_none()
     }
 }
 
@@ -240,6 +256,7 @@ mod tests {
             last_source: Some(SOURCE_RADIO.into()),
             last_visualiser: Some("auralis".into()),
             last_layout: Some("default".into()),
+            last_spotify_uri: None,
         };
         save_state(&state, &path).unwrap();
 
@@ -347,6 +364,49 @@ mod tests {
     fn state_is_empty_reports_empty_for_default() {
         assert!(State::default().is_empty());
         assert!(!State::with_station("u", None).is_empty());
+        assert!(!State::with_spotify("spotify:track:abc").is_empty());
+    }
+
+    #[test]
+    fn spotify_state_roundtrip() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("nested").join("state.toml");
+
+        let state = State::with_spotify("spotify:track:4PTG3Z6ehGkBFwjybzWkR8");
+        save_state(&state, &path).unwrap();
+
+        match load_state(&path).unwrap() {
+            Recovery::Loaded(loaded) => {
+                assert_eq!(
+                    loaded.last_spotify_uri.as_deref(),
+                    Some("spotify:track:4PTG3Z6ehGkBFwjybzWkR8")
+                );
+                assert_eq!(loaded.last_source.as_deref(), Some(SOURCE_SPOTIFY));
+                assert!(loaded.last_station_uuid.is_none());
+            }
+            other => panic!("expected Loaded, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn full_state_with_spotify_roundtrip() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("state.toml");
+
+        let state = State {
+            last_station_uuid: Some("abc-123".into()),
+            last_station_name: Some("SomaFM Groove Salad".into()),
+            last_source: Some(SOURCE_SPOTIFY.into()),
+            last_visualiser: Some("auralis".into()),
+            last_layout: Some("default".into()),
+            last_spotify_uri: Some("spotify:track:4PTG3Z6ehGkBFwjybzWkR8".into()),
+        };
+        save_state(&state, &path).unwrap();
+
+        match load_state(&path).unwrap() {
+            Recovery::Loaded(loaded) => assert_eq!(loaded, state),
+            other => panic!("expected Loaded, got {:?}", other),
+        }
     }
 
     #[test]

@@ -85,6 +85,81 @@ assert_stdout_ansi_truecolor() {
     fi
 }
 
+# assert_json_status <jsonfile> <jq_expr> <expected> <description>
+# Reads a JSON file and asserts the value at the given jq path equals expected.
+assert_json_status() {
+    local jsonfile="$1"
+    local jq_expr="$2"
+    local expected="$3"
+    local desc="$4"
+    local actual
+    actual=$(jq -r "$jq_expr" < "$jsonfile" 2>/dev/null || echo "__jq_error__")
+    if [[ "$actual" == "$expected" ]]; then
+        printf '%s json %s == %s — %s\n' "$E2E_PASS" "$jq_expr" "$expected" "$desc"
+    else
+        printf '%s json %s: expected %s, got %s — %s\n' "$E2E_FAIL" "$jq_expr" "$expected" "$actual" "$desc"
+        return 1
+    fi
+}
+
+# wait_for_log <logfile> <regex> <timeout_seconds>
+# Polls the logfile until the regex matches or the timeout expires.
+wait_for_log() {
+    local logfile="$1"
+    local regex="$2"
+    local timeout="${3:-10}"
+    local elapsed=0
+    e2e_log "waiting up to ${timeout}s for /${regex}/ in $(basename "$logfile")"
+    while (( elapsed < timeout )); do
+        if [[ -f "$logfile" ]] && grep -qE "$regex" "$logfile" 2>/dev/null; then
+            e2e_log "found /${regex}/ after ~${elapsed}s"
+            return 0
+        fi
+        sleep 0.5
+        elapsed=$((elapsed + 1))
+    done
+    printf '%s timed out waiting for /%s/ in %s after %ds\n' "$E2E_FAIL" "$regex" "$logfile" "$timeout"
+    return 1
+}
+
+# generate_wav_fixture <output_path> <duration_secs> <freq_hz>
+# Generates a PCM WAV file using python3 (stdlib only) or sox as fallback.
+generate_wav_fixture() {
+    local output="$1"
+    local duration="${2:-2}"
+    local freq="${3:-440}"
+    e2e_log "generating ${duration}s ${freq}Hz WAV fixture at $output"
+
+    if command -v python3 &>/dev/null; then
+        python3 -c "
+import struct, math, wave
+sr = 44100
+n = int(sr * $duration)
+with wave.open('$output', 'w') as w:
+    w.setnchannels(1)
+    w.setsampwidth(2)
+    w.setframerate(sr)
+    for i in range(n):
+        s = int(32767 * math.sin(2 * math.pi * $freq * i / sr))
+        w.writeframes(struct.pack('<h', s))
+"
+    elif command -v sox &>/dev/null; then
+        sox -n -r 44100 -c 1 -b 16 "$output" synth "$duration" sine "$freq"
+    else
+        printf '%s neither python3 nor sox available to generate WAV fixture\n' "$E2E_FAIL"
+        return 1
+    fi
+
+    if [[ -s "$output" ]]; then
+        local bytes
+        bytes=$(wc -c < "$output" | tr -d ' ')
+        e2e_log "WAV fixture generated ($bytes bytes)"
+    else
+        printf '%s WAV fixture generation failed\n' "$E2E_FAIL"
+        return 1
+    fi
+}
+
 # run_for <seconds> <cmd...>
 # Launches the command in the background, waits <seconds>, sends SIGINT,
 # waits for graceful exit. Captures stdout to $E2E_STDOUT and stderr to

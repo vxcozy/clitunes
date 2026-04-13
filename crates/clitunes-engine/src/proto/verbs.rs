@@ -31,13 +31,42 @@ pub enum Verb {
 pub enum SourceArg {
     Local { path: String },
     Radio { uuid: String },
+    Spotify { uri: String },
 }
 
 impl VerbEnvelope {
+    /// Deserialise a `VerbEnvelope` from a single line of JSON.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use clitunes_engine::proto::verbs::{VerbEnvelope, Verb};
+    ///
+    /// let line = r#"{"cmd_id":"abc-1","verb":"play"}"#;
+    /// let env = VerbEnvelope::from_line(line).unwrap();
+    /// assert_eq!(env.cmd_id, "abc-1");
+    /// assert_eq!(env.verb, Verb::Play);
+    /// ```
     pub fn from_line(line: &str) -> Result<Self, serde_json::Error> {
         serde_json::from_str(line)
     }
 
+    /// Serialise this envelope to a single line of JSON suitable for
+    /// writing to the control socket.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use clitunes_engine::proto::verbs::{VerbEnvelope, Verb};
+    ///
+    /// let env = VerbEnvelope {
+    ///     cmd_id: "v-2".into(),
+    ///     verb: Verb::Volume { level: 42 },
+    /// };
+    /// let line = env.to_line();
+    /// let roundtrip = VerbEnvelope::from_line(&line).unwrap();
+    /// assert_eq!(roundtrip, env);
+    /// ```
     pub fn to_line(&self) -> String {
         serde_json::to_string(self).expect("VerbEnvelope is always serialisable")
     }
@@ -92,6 +121,20 @@ mod tests {
             },
         };
         let line = env.to_line();
+        let parsed = VerbEnvelope::from_line(&line).unwrap();
+        assert_eq!(parsed, env);
+    }
+
+    #[test]
+    fn source_spotify_roundtrip() {
+        let env = VerbEnvelope {
+            cmd_id: "sp-1".into(),
+            verb: Verb::Source(SourceArg::Spotify {
+                uri: "spotify:track:4PTG3Z6ehGkBFwjybzWkR8".into(),
+            }),
+        };
+        let line = env.to_line();
+        assert!(line.contains("spotify"));
         let parsed = VerbEnvelope::from_line(&line).unwrap();
         assert_eq!(parsed, env);
     }

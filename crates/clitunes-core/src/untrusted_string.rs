@@ -29,6 +29,21 @@
 ///
 /// Allocates a new `String` only when bytes are actually removed; for the
 /// common case of clean station names, this returns the input as-is.
+///
+/// # Examples
+///
+/// ```
+/// use clitunes_core::sanitize;
+///
+/// // Clean strings pass through unchanged.
+/// assert_eq!(sanitize("BBC Radio 6 Music"), "BBC Radio 6 Music");
+///
+/// // ESC sequences are stripped, but printable chars remain.
+/// assert_eq!(sanitize("\x1b[2J\x1b[Hpwn"), "[2J[Hpwn");
+///
+/// // Unicode above the C1 range is preserved.
+/// assert_eq!(sanitize("Радио-1 ✨"), "Радио-1 ✨");
+/// ```
 pub fn sanitize(input: &str) -> String {
     // Fast path: if no byte needs stripping, return the input unchanged.
     if input.bytes().all(is_safe) {
@@ -45,6 +60,16 @@ pub fn sanitize(input: &str) -> String {
 }
 
 /// Sanitise in place, mutating an existing `String` to drop unsafe bytes.
+///
+/// # Examples
+///
+/// ```
+/// use clitunes_core::sanitize_in_place;
+///
+/// let mut s = String::from("hello\x1b[31mworld");
+/// sanitize_in_place(&mut s);
+/// assert_eq!(s, "hello[31mworld");
+/// ```
 pub fn sanitize_in_place(input: &mut String) {
     if input.bytes().all(is_safe) {
         return;

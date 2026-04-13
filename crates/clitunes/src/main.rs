@@ -13,6 +13,7 @@
 //! - `clitunes source local <path>`    → headless source switch
 //! - `clitunes status [--json]`        → one-shot status query
 
+use std::io::IsTerminal;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -42,9 +43,10 @@ fn main() -> Result<()> {
     }
 
     // TUI modes must log to a file — stderr shares the terminal and
-    // would corrupt the visualiser output.
+    // would corrupt the visualiser output. When stdout is not a terminal
+    // (CI / piped), stderr is safe because there's no terminal to corrupt.
     let tui_mode = matches!(mode, CliMode::FullTui(_) | CliMode::Pane { .. });
-    if tui_mode {
+    if tui_mode && std::io::stdout().is_terminal() {
         let log_path = std::env::temp_dir().join("clitunes-tui.log");
         observability::init_tracing_to_file("clitunes", &log_path)?;
     } else {

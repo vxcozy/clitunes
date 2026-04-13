@@ -79,7 +79,6 @@ pub fn render_now_playing(
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;

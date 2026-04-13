@@ -120,7 +120,6 @@ fn format_time(secs: u32) -> String {
     format!("{m}:{s:02}")
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;

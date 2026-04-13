@@ -113,12 +113,8 @@ impl Visualiser for Moire {
         // Compute the three orbiting centres.
         let mut centres = [(0.0f32, 0.0f32); 3];
         for i in 0..3 {
-            let angle = t * CENTER_SPEEDS[i] * speed_mul
-                + (i as f32) * 2.0 * PI / 3.0;
-            centres[i] = (
-                cx + orbit_r * angle.cos(),
-                cy + orbit_r * angle.sin(),
-            );
+            let angle = t * CENTER_SPEEDS[i] * speed_mul + (i as f32) * 2.0 * PI / 3.0;
+            centres[i] = (cx + orbit_r * angle.cos(), cy + orbit_r * angle.sin());
         }
 
         // Line-grid rotation angle.
@@ -145,10 +141,8 @@ impl Visualiser for Moire {
                 // Layer 4: rotating line grid. The interference between
                 // parallel lines and concentric circles is the signature
                 // moire effect.
-                let line_wave = (
-                    (xf * LINE_FREQ * line_cos + yf * LINE_FREQ * line_sin)
-                        + t * 0.3
-                ).sin();
+                let line_wave =
+                    ((xf * LINE_FREQ * line_cos + yf * LINE_FREQ * line_sin) + t * 0.3).sin();
 
                 // Combined field: ring interference + line interference.
                 // The 0.7/0.3 blend keeps rings dominant while the line

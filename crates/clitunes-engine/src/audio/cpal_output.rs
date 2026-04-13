@@ -195,8 +195,14 @@ impl CpalOutput {
 
         let stream_config: StreamConfig = selected.config();
         let underruns = Arc::new(AtomicU64::new(0));
-        let stream =
-            build_stream(&device, &stream_config, &negotiated, reader, &underruns, ring_rate)?;
+        let stream = build_stream(
+            &device,
+            &stream_config,
+            &negotiated,
+            reader,
+            &underruns,
+            ring_rate,
+        )?;
         stream.play().context("cpal: Stream::play failed")?;
 
         Ok(Self {

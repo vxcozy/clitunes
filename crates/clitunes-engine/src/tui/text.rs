@@ -49,7 +49,14 @@ mod tests {
     #[test]
     fn write_str_returns_cursor_position() {
         let mut grid = CellGrid::new(20, 1);
-        let end = write_str(&mut grid, 2, 0, "hello", Rgb::new(255, 255, 255), Rgb::BLACK);
+        let end = write_str(
+            &mut grid,
+            2,
+            0,
+            "hello",
+            Rgb::new(255, 255, 255),
+            Rgb::BLACK,
+        );
         assert_eq!(end, 7);
         assert_eq!(grid.cells()[2].ch, 'h');
         assert_eq!(grid.cells()[6].ch, 'o');
@@ -58,7 +65,14 @@ mod tests {
     #[test]
     fn write_str_clips_at_width() {
         let mut grid = CellGrid::new(5, 1);
-        let end = write_str(&mut grid, 3, 0, "abcde", Rgb::new(255, 255, 255), Rgb::BLACK);
+        let end = write_str(
+            &mut grid,
+            3,
+            0,
+            "abcde",
+            Rgb::new(255, 255, 255),
+            Rgb::BLACK,
+        );
         assert_eq!(end, 5);
         assert_eq!(grid.cells()[3].ch, 'a');
         assert_eq!(grid.cells()[4].ch, 'b');

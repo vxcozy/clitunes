@@ -124,10 +124,8 @@ impl Visualiser for Vortex {
                 // regression effect. The +0.1 avoids log(0) at center.
                 let log_dist = (dist + 0.1).ln();
 
-                let spiral_1 =
-                    (NUM_ARMS_1 * (angle - log_dist * twist_1) + rot_1).sin();
-                let spiral_2 =
-                    (NUM_ARMS_2 * (angle + log_dist * twist_2) + rot_2).sin();
+                let spiral_1 = (NUM_ARMS_1 * (angle - log_dist * twist_1) + rot_1).sin();
+                let spiral_2 = (NUM_ARMS_2 * (angle + log_dist * twist_2) + rot_2).sin();
 
                 // Blend the two spirals; the interference creates
                 // impossible-looking patterns.
@@ -135,8 +133,7 @@ impl Visualiser for Vortex {
 
                 // Radial brightness falloff: center is the bright eye
                 // of the vortex, edges fade out. Pulse with energy.
-                let center_brightness =
-                    (1.0 - dist * 0.7 * (1.0 / pulse)).clamp(0.2, 1.0);
+                let center_brightness = (1.0 - dist * 0.7 * (1.0 / pulse)).clamp(0.2, 1.0);
 
                 let intensity = (field * center_brightness).clamp(0.0, 1.0);
 
@@ -157,8 +154,7 @@ impl Visualiser for Vortex {
                 // Background: dark complementary hue at very low value
                 // so glyphs always have contrast.
                 let bg_hue = (hue + 0.5).fract();
-                let (br, bg_g, bb) =
-                    hsv_to_rgb(bg_hue, 0.8, 0.04 + 0.04 * intensity);
+                let (br, bg_g, bb) = hsv_to_rgb(bg_hue, 0.8, 0.04 + 0.04 * intensity);
                 let bg = Rgb::new(f32_to_u8(br), f32_to_u8(bg_g), f32_to_u8(bb));
 
                 grid.set(x, y, Cell { ch, fg, bg });

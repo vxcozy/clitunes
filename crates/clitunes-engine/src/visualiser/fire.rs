@@ -75,7 +75,8 @@ impl Fire {
     /// coordinate and a frame counter, returns a float in [0, 1].
     #[inline]
     fn hash_noise(x: u32, y: u32, frame: u32) -> f32 {
-        let mut h = x.wrapping_mul(374761393)
+        let mut h = x
+            .wrapping_mul(374761393)
             .wrapping_add(y.wrapping_mul(668265263))
             .wrapping_add(frame.wrapping_mul(1013904223));
         h = (h ^ (h >> 13)).wrapping_mul(1274126177);

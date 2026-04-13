@@ -396,8 +396,19 @@ async fn dispatch_verbs(
                 tracing::info!(target: "clitunes_engine", "play: state → Playing");
                 let evt = {
                     let mut guard = last_state.lock();
-                    if let Some(Event::StateChanged { state, .. }) = guard.as_mut() {
-                        *state = PlayState::Playing;
+                    match guard.as_mut() {
+                        Some(Event::StateChanged { state, .. }) => {
+                            *state = PlayState::Playing;
+                        }
+                        _ => {
+                            *guard = Some(Event::StateChanged {
+                                state: PlayState::Playing,
+                                source: None,
+                                station_or_path: None,
+                                position_secs: None,
+                                duration_secs: None,
+                            });
+                        }
                     }
                     guard.clone()
                 };
@@ -410,8 +421,19 @@ async fn dispatch_verbs(
                 tracing::info!(target: "clitunes_engine", "pause: state → Paused");
                 let evt = {
                     let mut guard = last_state.lock();
-                    if let Some(Event::StateChanged { state, .. }) = guard.as_mut() {
-                        *state = PlayState::Paused;
+                    match guard.as_mut() {
+                        Some(Event::StateChanged { state, .. }) => {
+                            *state = PlayState::Paused;
+                        }
+                        _ => {
+                            *guard = Some(Event::StateChanged {
+                                state: PlayState::Paused,
+                                source: None,
+                                station_or_path: None,
+                                position_secs: None,
+                                duration_secs: None,
+                            });
+                        }
                     }
                     guard.clone()
                 };

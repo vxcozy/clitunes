@@ -17,8 +17,8 @@ use clitunes_engine::audio::FftTap;
 use clitunes_engine::pcm::cross_process_api::PcmConsumer;
 use clitunes_engine::proto::events::Event;
 use clitunes_engine::visualiser::{
-    AnsiWriter, CellGrid, Fire, Matrix, Metaballs, Moire, Plasma, Ripples,
-    TuiContext, Tunnel, Visualiser, Vortex,
+    AnsiWriter, CellGrid, Fire, Matrix, Metaballs, Moire, Plasma, Ripples, TuiContext, Tunnel,
+    Visualiser, Vortex,
 };
 
 const FFT_SIZE: usize = 2048;

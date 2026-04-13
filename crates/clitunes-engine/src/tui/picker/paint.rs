@@ -50,7 +50,8 @@ use crate::visualiser::cell_grid::{Cell, CellGrid, Rgb};
 const HEADER_PRIMARY: &str = "First time? Pick a starting point.";
 const HEADER_SECONDARY: &str = "You can change it anytime.";
 const FOOTER: &str = "↑/↓ move   enter select   s hide   q quit";
-const FOOTER_VIZ: &str = "n/p cycle viz · plasma · ripples · tunnel · metaballs · vortex · fire · matrix · moiré";
+const FOOTER_VIZ: &str =
+    "n/p cycle viz · plasma · ripples · tunnel · metaballs · vortex · fire · matrix · moiré";
 
 /// Minimum comfortable modal dimensions. See [`paint_picker`] for the
 /// fallback behavior when the grid is smaller.

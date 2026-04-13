@@ -13,8 +13,8 @@ use clitunes_engine::proto::events::Event;
 use clitunes_engine::proto::verbs::Verb;
 use clitunes_engine::tui::micro::{BreathingAnimation, ErrorPulse, QuitFade, VolumeOverlay};
 use clitunes_engine::tui::picker::{
-    key_from_bytes, load_curated, CuratedList, CuratedLoadOutcome, PickerAction, PickerKey,
-    PickerState, PickerTransition, paint_picker,
+    key_from_bytes, load_curated, paint_picker, CuratedList, CuratedLoadOutcome, PickerAction,
+    PickerKey, PickerState, PickerTransition,
 };
 use clitunes_engine::tui::theme::Theme;
 
@@ -126,7 +126,11 @@ impl AppState {
     fn handle_event(&mut self, event: &Event, stop: &AtomicBool) {
         match event {
             Event::VizChanged { name } => {
-                if let Some(idx) = self.visualisers.iter().position(|v| v.id().as_str() == name) {
+                if let Some(idx) = self
+                    .visualisers
+                    .iter()
+                    .position(|v| v.id().as_str() == name)
+                {
                     self.transition_ctrl
                         .start_viz_switch(&self.grid, idx > self.active_idx);
                     self.active_idx = idx;
@@ -139,8 +143,7 @@ impl AppState {
             } if source == "radio" => {
                 self.transition_ctrl.start_source_switch(&self.grid);
                 self.picker_state.hide();
-                let paused =
-                    matches!(state, clitunes_engine::proto::events::PlayState::Paused);
+                let paused = matches!(state, clitunes_engine::proto::events::PlayState::Paused);
                 self.transition_ctrl.set_paused(paused, &self.grid);
                 if paused {
                     self.breathing.start();
@@ -149,8 +152,7 @@ impl AppState {
                 }
             }
             Event::StateChanged { state, .. } => {
-                let paused =
-                    matches!(state, clitunes_engine::proto::events::PlayState::Paused);
+                let paused = matches!(state, clitunes_engine::proto::events::PlayState::Paused);
                 self.transition_ctrl.set_paused(paused, &self.grid);
                 if paused {
                     self.breathing.start();
@@ -178,11 +180,7 @@ impl AppState {
 
     /// Handle a keypress. Returns `true` if the terminal screen should
     /// be cleared (viz switch).
-    fn handle_key(
-        &mut self,
-        key: AppKey,
-        verb_tx: &tokio::sync::mpsc::Sender<Verb>,
-    ) -> bool {
+    fn handle_key(&mut self, key: AppKey, verb_tx: &tokio::sync::mpsc::Sender<Verb>) -> bool {
         if self.quit_fade.is_input_blocked() {
             return false;
         }
@@ -192,8 +190,7 @@ impl AppState {
                 let action = self.picker_state.handle_key(pk);
                 match action {
                     PickerAction::Pick(slot) => {
-                        if let Some(station) =
-                            self.curated.stations.iter().find(|s| s.slot == slot)
+                        if let Some(station) = self.curated.stations.iter().find(|s| s.slot == slot)
                         {
                             self.picker_state.hide();
                             self.picker_transition = PickerTransition::start_fade_out();
@@ -355,7 +352,9 @@ impl RenderLoop {
 
             // Render active visualiser.
             {
-                let mut ctx = TuiContext { grid: &mut state.grid };
+                let mut ctx = TuiContext {
+                    grid: &mut state.grid,
+                };
                 state.visualisers[state.active_idx].render_tui(&mut ctx, &snapshot);
             }
 

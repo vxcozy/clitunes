@@ -51,7 +51,11 @@ pub fn slide(
 
             let cell = if positive {
                 if pos + offset < axis_len {
-                    let si = if horizontal { y * w + x + offset } else { (y + offset) * w + x };
+                    let si = if horizontal {
+                        y * w + x + offset
+                    } else {
+                        (y + offset) * w + x
+                    };
                     cells_src[si]
                 } else {
                     let tp = pos + offset - axis_len;
@@ -63,7 +67,11 @@ pub fn slide(
                     }
                 }
             } else if pos >= offset {
-                let si = if horizontal { y * w + x - offset } else { (y - offset) * w + x };
+                let si = if horizontal {
+                    y * w + x - offset
+                } else {
+                    (y - offset) * w + x
+                };
                 cells_src[si]
             } else {
                 let tp = axis_len - offset + pos;

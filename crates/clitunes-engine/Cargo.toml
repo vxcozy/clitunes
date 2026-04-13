@@ -46,7 +46,7 @@ spotify = [
 ]
 # Spotify Web API: search, library, playlists via rspotify. Daemon-safe
 # (no image/TUI deps). Requires `spotify` for shared auth infrastructure.
-webapi = ["spotify", "dep:rspotify"]
+webapi = ["spotify", "dep:rspotify", "dep:chrono"]
 # Album art decoding + CDN fetch. Client-only — daemon must NOT enable
 # this feature (D15). reqwest is already in the dep graph via `radio`;
 # the `image` crate is the new dependency.
@@ -106,6 +106,7 @@ rubato = { workspace = true, optional = true }
 
 # Spotify Web API (v1.2 webapi feature).
 rspotify = { workspace = true, optional = true }
+chrono = { workspace = true, optional = true }
 
 # Album art decoding (v1.2 album-art feature). Client-only (D15).
 image = { workspace = true, optional = true }

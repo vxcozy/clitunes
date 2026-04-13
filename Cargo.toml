@@ -79,6 +79,7 @@ rubato = "2"
 # library, and playlist browsing. Default TLS disabled — we use rustls
 # to stay consistent with the rest of the workspace.
 rspotify = { version = "0.16", default-features = false, features = ["client-reqwest", "reqwest-rustls-tls"] }
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
 
 # Album art decoding (v1.2). The `image` crate decodes JPEG/PNG covers
 # fetched from Spotify's CDN. Client-only — daemon never touches images (D15).

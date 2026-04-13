@@ -389,6 +389,7 @@ version = "1.0.0"
 dependencies = [
  "anyhow",
  "bytes",
+ "chrono",
  "clitunes-core",
  "cpal",
  "crossterm 0.28.1",

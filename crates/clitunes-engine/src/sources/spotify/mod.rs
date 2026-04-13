@@ -7,7 +7,9 @@
 pub mod auth;
 pub mod sink;
 
-pub use auth::{default_credentials_path, load_credentials, load_or_authenticate};
+pub use auth::{default_credentials_path, load_credentials, load_or_authenticate, AuthResult};
+#[cfg(feature = "webapi")]
+pub mod token;
 
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -130,10 +132,12 @@ async fn run_spotify_playback(
     //    Runs on a blocking thread to avoid starving the async runtime
     //    during the HTTP token-refresh round-trip.
     let cred_path_owned = cred_path.to_path_buf();
-    let credentials = tokio::task::spawn_blocking(move || auth::load_credentials(&cred_path_owned))
-        .await
-        .context("credential task panicked")?
-        .context("Spotify authentication failed")?;
+    let auth_result =
+        tokio::task::spawn_blocking(move || auth::load_credentials(&cred_path_owned))
+            .await
+            .context("credential task panicked")?
+            .context("Spotify authentication failed")?;
+    let credentials = auth_result.credentials;
 
     // 2. Connect session.
     let session_config = SessionConfig::default();
@@ -340,7 +344,7 @@ async fn attempt_reconnect(session: &Session, cred_path: &std::path::Path) -> Re
             match tokio::task::spawn_blocking(move || auth::load_credentials(&cred_path_owned))
                 .await
             {
-                Ok(Ok(c)) => c,
+                Ok(Ok(auth_result)) => auth_result.credentials,
                 Ok(Err(e)) => {
                     warn!(error = %e, "spotify: credential reload failed during reconnect");
                     continue;

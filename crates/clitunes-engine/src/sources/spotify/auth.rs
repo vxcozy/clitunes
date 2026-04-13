@@ -21,8 +21,13 @@ const SPOTIFY_CLIENT_ID: &str = "65b708073fc0480ea92a077233ca87bd";
 /// Redirect URI registered for the PKCE client. Must use this exact port.
 const SPOTIFY_REDIRECT_URI: &str = "http://127.0.0.1:8898/login";
 
-/// Minimum scopes needed for playback.
-const SPOTIFY_SCOPES: &[&str] = &["streaming"];
+/// All scopes needed for playback + Web API (v1.2).
+const SPOTIFY_SCOPES: &[&str] = &[
+    "streaming",
+    "user-library-read",
+    "playlist-read-private",
+    "user-read-recently-played",
+];
 
 /// HTML response shown in the browser after successful OAuth callback.
 const REDIRECT_RESPONSE: &str = r#"<!doctype html>
@@ -33,6 +38,12 @@ const REDIRECT_RESPONSE: &str = r#"<!doctype html>
 struct CachedCredentials {
     refresh_token: String,
     consent_given: bool,
+    /// Scopes that were granted during the last OAuth flow. Old credential
+    /// files (pre-v1.2) lack this field — `#[serde(default)]` deserializes
+    /// them as `vec![]`, which triggers re-auth when the required scopes
+    /// aren't satisfied.
+    #[serde(default)]
+    scopes: Vec<String>,
 }
 
 /// Default path: `~/.config/clitunes/spotify/credentials.json`.
@@ -44,16 +55,34 @@ pub fn default_credentials_path() -> Option<PathBuf> {
     })
 }
 
+/// Result of a successful credential load or authentication: both the
+/// raw OAuth token (for rspotify) and librespot-ready credentials.
+pub struct AuthResult {
+    /// The raw OAuth token (access + refresh). Used by [`SharedTokenProvider`](super::token::SharedTokenProvider)
+    /// to construct both rspotify and librespot credentials.
+    pub token: OAuthToken,
+    /// librespot-ready session credentials.
+    pub credentials: Credentials,
+}
+
 /// Load cached credentials and refresh the access token. Returns
-/// session-ready `Credentials`. If no cache exists or refresh fails,
-/// returns an error — **never** prompts interactively.
+/// session-ready `Credentials`. If no cache exists, refresh fails,
+/// or cached scopes are insufficient, returns an error — **never**
+/// prompts interactively.
 ///
 /// This is the daemon-safe entry point. The daemon is a double-forked
 /// detached process with no terminal; interactive auth must be driven
 /// by the client via [`load_or_authenticate`].
-pub fn load_credentials(cred_path: &Path) -> Result<Credentials> {
+pub fn load_credentials(cred_path: &Path) -> Result<AuthResult> {
     let cached = load_cached(cred_path)?
         .ok_or_else(|| anyhow::anyhow!("no cached Spotify credentials; run `clitunes auth` or play a Spotify URI from the client to authenticate"))?;
+
+    if !scopes_sufficient(&cached.scopes) {
+        anyhow::bail!(
+            "cached Spotify credentials lack required scopes; \
+             run `clitunes auth` to re-authenticate with expanded permissions"
+        );
+    }
 
     let token = refresh_access_token(&cached.refresh_token)
         .map_err(|e| anyhow::anyhow!("Spotify token refresh failed: {e}"))?;
@@ -63,46 +92,58 @@ pub fn load_credentials(cred_path: &Path) -> Result<Credentials> {
     save_cached(
         cred_path,
         &CachedCredentials {
-            refresh_token: token.refresh_token,
+            refresh_token: token.refresh_token.clone(),
             consent_given: true,
+            scopes: required_scopes(),
         },
     )?;
 
-    Ok(Credentials::with_access_token(token.access_token))
+    Ok(AuthResult {
+        credentials: Credentials::with_access_token(token.access_token.clone()),
+        token,
+    })
 }
 
 /// Load cached credentials, refresh the access token, and return
-/// session-ready `Credentials`. If no cache exists or refresh fails,
-/// runs the interactive PKCE flow (which opens a browser).
+/// session-ready [`AuthResult`]. If no cache exists, refresh fails,
+/// or scopes are insufficient, runs the interactive PKCE flow (which
+/// opens a browser).
 ///
 /// The very first invocation shows a TOS consent prompt; consent
 /// is persisted in the credential file so it only appears once.
 ///
 /// **Client-side only.** Never call this from the daemon — use
 /// [`load_credentials`] instead.
-pub fn load_or_authenticate(cred_path: &Path) -> Result<Credentials> {
-    // Try cached credentials first.
+pub fn load_or_authenticate(cred_path: &Path) -> Result<AuthResult> {
+    // Try cached credentials first (with scope check).
     if let Some(cached) = load_cached(cred_path)? {
-        match refresh_access_token(&cached.refresh_token) {
-            Ok(token) => {
-                info!("Spotify token refreshed successfully");
-                // Update the cache with the new refresh token (Spotify may rotate it).
-                save_cached(
-                    cred_path,
-                    &CachedCredentials {
-                        refresh_token: token.refresh_token,
-                        consent_given: true,
-                    },
-                )?;
-                return Ok(Credentials::with_access_token(token.access_token));
+        if scopes_sufficient(&cached.scopes) {
+            match refresh_access_token(&cached.refresh_token) {
+                Ok(token) => {
+                    info!("Spotify token refreshed successfully");
+                    save_cached(
+                        cred_path,
+                        &CachedCredentials {
+                            refresh_token: token.refresh_token.clone(),
+                            consent_given: true,
+                            scopes: required_scopes(),
+                        },
+                    )?;
+                    return Ok(AuthResult {
+                        credentials: Credentials::with_access_token(token.access_token.clone()),
+                        token,
+                    });
+                }
+                Err(e) => {
+                    warn!("Spotify token refresh failed, re-authenticating: {e}");
+                }
             }
-            Err(e) => {
-                warn!("Spotify token refresh failed, re-authenticating: {e}");
-            }
+        } else {
+            info!("cached Spotify scopes insufficient, re-authenticating for expanded permissions");
         }
     }
 
-    // No valid cached credentials — need interactive auth.
+    // No valid cached credentials or scopes insufficient — need interactive auth.
     ensure_consent(cred_path)?;
 
     let token = run_oauth_flow().context("Spotify OAuth PKCE flow failed")?;
@@ -111,12 +152,16 @@ pub fn load_or_authenticate(cred_path: &Path) -> Result<Credentials> {
     save_cached(
         cred_path,
         &CachedCredentials {
-            refresh_token: token.refresh_token,
+            refresh_token: token.refresh_token.clone(),
             consent_given: true,
+            scopes: required_scopes(),
         },
     )?;
 
-    Ok(Credentials::with_access_token(token.access_token))
+    Ok(AuthResult {
+        credentials: Credentials::with_access_token(token.access_token.clone()),
+        token,
+    })
 }
 
 /// Check whether the user has already consented to using librespot.
@@ -180,6 +225,21 @@ fn refresh_access_token(refresh_token: &str) -> Result<OAuthToken, OAuthError> {
     .build()?;
 
     client.refresh_token(refresh_token)
+}
+
+// ── Scope helpers ─────────────────────────────────────────────────
+
+/// The canonical list of required scopes as owned strings.
+fn required_scopes() -> Vec<String> {
+    SPOTIFY_SCOPES.iter().map(|s| (*s).to_owned()).collect()
+}
+
+/// Returns `true` if `granted` contains every scope in [`SPOTIFY_SCOPES`].
+/// An empty `granted` (pre-v1.2 credential files) always fails.
+fn scopes_sufficient(granted: &[String]) -> bool {
+    SPOTIFY_SCOPES
+        .iter()
+        .all(|required| granted.iter().any(|g| g == required))
 }
 
 // ── Credential persistence ─────────────────────────────────────────
@@ -270,12 +330,14 @@ mod tests {
         let creds = CachedCredentials {
             refresh_token: "test-refresh-token-abc123".into(),
             consent_given: true,
+            scopes: required_scopes(),
         };
         save_cached(&path, &creds).unwrap();
 
         let loaded = load_cached(&path).unwrap().unwrap();
         assert_eq!(loaded.refresh_token, "test-refresh-token-abc123");
         assert!(loaded.consent_given);
+        assert_eq!(loaded.scopes, required_scopes());
     }
 
     #[test]
@@ -286,6 +348,7 @@ mod tests {
         let creds = CachedCredentials {
             refresh_token: "tok".into(),
             consent_given: true,
+            scopes: required_scopes(),
         };
         save_cached(&path, &creds).unwrap();
 
@@ -303,6 +366,7 @@ mod tests {
         let creds = CachedCredentials {
             refresh_token: "tok".into(),
             consent_given: true,
+            scopes: required_scopes(),
         };
         save_cached(&path, &creds).unwrap();
 
@@ -329,6 +393,7 @@ mod tests {
         let creds = CachedCredentials {
             refresh_token: "tok".into(),
             consent_given: true,
+            scopes: required_scopes(),
         };
         save_cached(&path, &creds).unwrap();
 
@@ -368,6 +433,7 @@ mod tests {
             &CachedCredentials {
                 refresh_token: "old-token".into(),
                 consent_given: false,
+                scopes: vec!["streaming".into()],
             },
         )
         .unwrap();
@@ -378,6 +444,7 @@ mod tests {
             &CachedCredentials {
                 refresh_token: "new-token".into(),
                 consent_given: true,
+                scopes: required_scopes(),
             },
         )
         .unwrap();
@@ -385,5 +452,76 @@ mod tests {
         let loaded = load_cached(&path).unwrap().unwrap();
         assert_eq!(loaded.refresh_token, "new-token");
         assert!(loaded.consent_given);
+    }
+
+    // ── Scope-checking tests ─────────────────────────────────────────
+
+    #[test]
+    fn scopes_sufficient_with_all_required() {
+        let granted = required_scopes();
+        assert!(scopes_sufficient(&granted));
+    }
+
+    #[test]
+    fn scopes_sufficient_with_superset() {
+        let mut granted = required_scopes();
+        granted.push("user-modify-playback-state".into());
+        assert!(scopes_sufficient(&granted));
+    }
+
+    #[test]
+    fn scopes_insufficient_with_empty() {
+        assert!(!scopes_sufficient(&[]));
+    }
+
+    #[test]
+    fn scopes_insufficient_with_old_streaming_only() {
+        let granted = vec!["streaming".into()];
+        assert!(!scopes_sufficient(&granted));
+    }
+
+    #[test]
+    fn scopes_insufficient_missing_one() {
+        // All except user-read-recently-played.
+        let granted = vec![
+            "streaming".into(),
+            "user-library-read".into(),
+            "playlist-read-private".into(),
+        ];
+        assert!(!scopes_sufficient(&granted));
+    }
+
+    #[test]
+    fn pre_v12_credentials_deserialize_with_empty_scopes() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("credentials.json");
+
+        // Simulate a pre-v1.2 credential file (no scopes field).
+        let json = r#"{"refresh_token":"old-tok","consent_given":true}"#;
+        fs::write(&path, json).unwrap();
+
+        let loaded = load_cached(&path).unwrap().unwrap();
+        assert!(loaded.scopes.is_empty());
+        assert!(!scopes_sufficient(&loaded.scopes));
+    }
+
+    #[test]
+    fn credential_roundtrip_preserves_scopes() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("credentials.json");
+
+        let scopes = required_scopes();
+        save_cached(
+            &path,
+            &CachedCredentials {
+                refresh_token: "tok".into(),
+                consent_given: true,
+                scopes: scopes.clone(),
+            },
+        )
+        .unwrap();
+
+        let loaded = load_cached(&path).unwrap().unwrap();
+        assert_eq!(loaded.scopes, scopes);
     }
 }

@@ -154,7 +154,7 @@ impl DaemonEventLoop {
 
         let idle_check_stop = Arc::clone(&self.stop);
         let idle_ref = Arc::clone(&self.idle);
-        tokio::spawn(async move {
+        let idle_shutdown = async move {
             loop {
                 if idle_check_stop.load(Ordering::Relaxed) {
                     return;
@@ -166,9 +166,14 @@ impl DaemonEventLoop {
                 }
                 tokio::time::sleep(Duration::from_millis(500)).await;
             }
-        });
+        };
 
-        server.run().await;
+        tokio::select! {
+            _ = server.run() => {}
+            _ = idle_shutdown => {
+                tracing::info!(target: "clitunesd", "idle shutdown complete");
+            }
+        }
 
         self.stop.store(true, Ordering::SeqCst);
         let _ = source_thread.join();

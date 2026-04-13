@@ -2,6 +2,10 @@
 //!
 //! Wraps librespot-oauth for the browser-based PKCE flow and caches
 //! credentials at `~/.config/clitunes/spotify/credentials.json` (mode 0600).
+//!
+//! Supports headless/SSH environments: when no local display is available,
+//! the flow prints the OAuth URL and port-forward instructions instead of
+//! opening a browser.
 
 use std::fs;
 use std::io::Write as _;
@@ -104,10 +108,31 @@ pub fn load_credentials(cred_path: &Path) -> Result<AuthResult> {
     })
 }
 
+/// Returns `true` when the session appears to be headless (SSH without
+/// X11/Wayland forwarding). In headless mode the OAuth flow prints the
+/// URL instead of opening a browser.
+///
+/// Detection: `$SSH_CONNECTION` or `$SSH_TTY` is set AND neither
+/// `$DISPLAY` nor `$WAYLAND_DISPLAY` is set.
+pub fn is_headless() -> bool {
+    let ssh = std::env::var_os("SSH_CONNECTION").is_some()
+        || std::env::var_os("SSH_TTY").is_some();
+    let display = std::env::var_os("DISPLAY").is_some()
+        || std::env::var_os("WAYLAND_DISPLAY").is_some();
+    detect_headless(ssh, display)
+}
+
+/// Pure logic for headless detection, factored out for testability.
+fn detect_headless(ssh: bool, display: bool) -> bool {
+    ssh && !display
+}
+
 /// Load cached credentials, refresh the access token, and return
 /// session-ready [`AuthResult`]. If no cache exists, refresh fails,
-/// or scopes are insufficient, runs the interactive PKCE flow (which
-/// opens a browser).
+/// or scopes are insufficient, runs the interactive PKCE flow.
+///
+/// In headless mode (SSH without display), the OAuth URL is printed
+/// with port-forward instructions instead of opening a browser.
 ///
 /// The very first invocation shows a TOS consent prompt; consent
 /// is persisted in the credential file so it only appears once.
@@ -146,7 +171,12 @@ pub fn load_or_authenticate(cred_path: &Path) -> Result<AuthResult> {
     // No valid cached credentials or scopes insufficient — need interactive auth.
     ensure_consent(cred_path)?;
 
-    let token = run_oauth_flow().context("Spotify OAuth PKCE flow failed")?;
+    let headless = is_headless();
+    if headless {
+        print_headless_instructions();
+    }
+
+    let token = run_oauth_flow(!headless).context("Spotify OAuth PKCE flow failed")?;
     info!("Spotify OAuth flow completed");
 
     save_cached(
@@ -200,19 +230,39 @@ fn ensure_consent(cred_path: &Path) -> Result<()> {
     Ok(())
 }
 
-/// Run the OAuth2 PKCE flow via librespot-oauth. Opens a browser and
-/// listens on `127.0.0.1:8898` for the redirect callback.
-fn run_oauth_flow() -> Result<OAuthToken, OAuthError> {
-    let client = OAuthClientBuilder::new(
+/// Print headless-mode instructions to stderr before the OAuth flow starts.
+fn print_headless_instructions() {
+    eprintln!(
+        "\n\x1b[1;36mHeadless mode detected\x1b[0m (SSH session, no display)\n\
+         \n\
+         The OAuth URL will be printed below. Open it in a browser on a\n\
+         machine that can reach this host on port 8898.\n\
+         \n\
+         If your terminal is remote, set up a port forward first:\n\
+         \n\
+         \x1b[1m  ssh -L 8898:127.0.0.1:8898 <this-host>\x1b[0m\n\
+         \n\
+         Then open the URL in your local browser. The callback will\n\
+         route through the tunnel to complete authentication.\n"
+    );
+}
+
+/// Run the OAuth2 PKCE flow via librespot-oauth. Listens on
+/// `127.0.0.1:8898` for the redirect callback. When `open_browser`
+/// is true, also opens the auth URL in the default browser.
+fn run_oauth_flow(open_browser: bool) -> Result<OAuthToken, OAuthError> {
+    let mut builder = OAuthClientBuilder::new(
         SPOTIFY_CLIENT_ID,
         SPOTIFY_REDIRECT_URI,
         SPOTIFY_SCOPES.to_vec(),
     )
-    .open_in_browser()
-    .with_custom_message(REDIRECT_RESPONSE)
-    .build()?;
+    .with_custom_message(REDIRECT_RESPONSE);
 
-    client.get_access_token()
+    if open_browser {
+        builder = builder.open_in_browser();
+    }
+
+    builder.build()?.get_access_token()
 }
 
 /// Refresh an existing access token using a cached refresh token.
@@ -523,5 +573,27 @@ mod tests {
 
         let loaded = load_cached(&path).unwrap().unwrap();
         assert_eq!(loaded.scopes, scopes);
+    }
+
+    // ── Headless detection tests ─────────────────────────────────────
+
+    #[test]
+    fn headless_ssh_no_display() {
+        assert!(detect_headless(true, false));
+    }
+
+    #[test]
+    fn not_headless_no_ssh() {
+        assert!(!detect_headless(false, false));
+    }
+
+    #[test]
+    fn not_headless_ssh_with_x11_forwarding() {
+        assert!(!detect_headless(true, true));
+    }
+
+    #[test]
+    fn not_headless_local_desktop() {
+        assert!(!detect_headless(false, true));
     }
 }

@@ -12,6 +12,7 @@
 //! - `clitunes source radio <uuid>`    → headless source switch
 //! - `clitunes source local <path>`    → headless source switch
 //! - `clitunes status [--json]`        → one-shot status query
+//! - `clitunes auth`                   → interactive Spotify auth (headless-safe)
 
 use std::io::IsTerminal;
 use std::path::PathBuf;
@@ -40,6 +41,10 @@ fn main() -> Result<()> {
     if let CliMode::Help = mode {
         print_help();
         return Ok(());
+    }
+
+    if let CliMode::Auth = mode {
+        return run_auth();
     }
 
     // TUI modes must log to a file — stderr shares the terminal and
@@ -85,13 +90,33 @@ fn main() -> Result<()> {
         CliMode::Pane { name, viz } => rt.block_on(run_pane(name, viz, socket_path, app_stop)),
         CliMode::Headless(verb) => rt.block_on(run_headless(verb, &socket_path)),
         CliMode::StatusJson => rt.block_on(run_status_json(&socket_path)),
-        CliMode::Help => unreachable!(),
+        CliMode::Help | CliMode::Auth => unreachable!(),
     }
 }
 
 struct StartupTimings {
     t0: Instant,
     daemon_connected: Duration,
+}
+
+// ─── dispatch: auth ───────────────────────────────────────────────
+
+fn run_auth() -> Result<()> {
+    use clitunes_engine::sources::spotify::{default_credentials_path, load_or_authenticate};
+
+    let cred_path = default_credentials_path()
+        .ok_or_else(|| anyhow::anyhow!("cannot determine config directory"))?;
+
+    match load_or_authenticate(&cred_path) {
+        Ok(_) => {
+            eprintln!("Spotify credentials saved to {}", cred_path.display());
+            Ok(())
+        }
+        Err(e) => {
+            eprintln!("Spotify authentication failed: {e}");
+            Err(e)
+        }
+    }
 }
 
 // ─── dispatch: headless verb ───────────────────────────────────────
@@ -379,6 +404,7 @@ enum CliMode {
     Pane { name: String, viz: Option<String> },
     Headless(Verb),
     StatusJson,
+    Auth,
 }
 
 impl CliMode {
@@ -440,6 +466,7 @@ impl CliMode {
 
         // Subcommand dispatch
         match args[0].as_str() {
+            "auth" => Ok(CliMode::Auth),
             "play" => Ok(CliMode::Headless(Verb::Play)),
             "pause" => Ok(CliMode::Headless(Verb::Pause)),
             "next" => Ok(CliMode::Headless(Verb::Next)),
@@ -560,6 +587,7 @@ USAGE:
     clitunes source radio <uuid>            Switch to radio station
     clitunes source local <path>            Play local file/directory
     clitunes status [--json]                Print current status as JSON
+    clitunes auth                           Authenticate with Spotify (headless-safe)
 
 PANE NAMES:
     visualiser      Fullscreen visualiser (default: auralis, override with --viz)

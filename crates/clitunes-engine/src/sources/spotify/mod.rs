@@ -7,7 +7,7 @@
 pub mod auth;
 pub mod sink;
 
-pub use auth::{default_credentials_path, load_or_authenticate};
+pub use auth::{default_credentials_path, load_credentials, load_or_authenticate};
 
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -126,9 +126,14 @@ async fn run_spotify_playback(
     writer: &mut dyn PcmWriter,
     stop: &AtomicBool,
 ) -> Result<()> {
-    // 1. Authenticate.
-    let credentials =
-        auth::load_or_authenticate(cred_path).context("Spotify authentication failed")?;
+    // 1. Authenticate (daemon-safe: refresh only, never interactive).
+    //    Runs on a blocking thread to avoid starving the async runtime
+    //    during the HTTP token-refresh round-trip.
+    let cred_path_owned = cred_path.to_path_buf();
+    let credentials = tokio::task::spawn_blocking(move || auth::load_credentials(&cred_path_owned))
+        .await
+        .context("credential task panicked")?
+        .context("Spotify authentication failed")?;
 
     // 2. Connect session.
     let session_config = SessionConfig::default();
@@ -162,7 +167,10 @@ async fn run_spotify_playback(
     player.load(spotify_uri, true, 0);
     info!(uri = %uri_str, "spotify: track loaded");
 
-    // 8. PCM drain + event monitoring loop.
+    // 8. Track last known position for resume after reconnect.
+    let mut last_position_ms: u32 = 0;
+
+    // 9. PCM drain + event monitoring loop.
     // `writer` isn't Send so we can't move it into a spawned task —
     // everything runs in the same task, woken by `tokio::select!`.
     loop {
@@ -170,6 +178,10 @@ async fn run_spotify_playback(
             player.stop();
             break;
         }
+
+        // Register the notify future BEFORE draining so we don't miss
+        // notifications that fire between the last try_recv and select!.
+        let notified = pcm_notify.notified();
 
         // Drain all available PCM frames (non-blocking).
         loop {
@@ -187,7 +199,7 @@ async fn run_spotify_playback(
 
         // Wait for the next wake-up: PCM data, player event, or stop check.
         tokio::select! {
-            _ = pcm_notify.notified() => {
+            _ = notified => {
                 // PCM data available — loop back to drain.
             }
             event = player_events.recv() => {
@@ -195,6 +207,12 @@ async fn run_spotify_playback(
                     Some(event) => {
                         handle_player_event(&event, event_tx, uri_str).await;
                         match event {
+                            PlayerEvent::Playing { position_ms, .. } => {
+                                last_position_ms = position_ms;
+                            }
+                            PlayerEvent::Paused { position_ms, .. } => {
+                                last_position_ms = position_ms;
+                            }
                             PlayerEvent::EndOfTrack { .. } => {
                                 info!("spotify: end of track");
                                 break;
@@ -225,9 +243,12 @@ async fn run_spotify_playback(
                                         .await;
                                     break;
                                 }
-                                info!("spotify: reconnected, reloading track");
+                                info!(
+                                    position_ms = last_position_ms,
+                                    "spotify: reconnected, resuming track"
+                                );
                                 match SpotifyUri::from_uri(uri_str) {
-                                    Ok(uri) => player.load(uri, true, 0),
+                                    Ok(uri) => player.load(uri, true, last_position_ms),
                                     Err(e) => {
                                         error!(error = %e, "spotify: failed to re-parse URI after reconnect");
                                         break;
@@ -313,14 +334,22 @@ async fn attempt_reconnect(session: &Session, cred_path: &std::path::Path) -> Re
         info!(attempt = i + 1, "spotify: reconnect attempt");
         tokio::time::sleep(*delay).await;
 
-        // Re-load credentials (they may have been refreshed).
-        let credentials = match auth::load_or_authenticate(cred_path) {
-            Ok(c) => c,
-            Err(e) => {
-                warn!(error = %e, "spotify: credential reload failed during reconnect");
-                continue;
-            }
-        };
+        // Re-load credentials on a blocking thread (daemon-safe, no interactive auth).
+        let cred_path_owned = cred_path.to_path_buf();
+        let credentials =
+            match tokio::task::spawn_blocking(move || auth::load_credentials(&cred_path_owned))
+                .await
+            {
+                Ok(Ok(c)) => c,
+                Ok(Err(e)) => {
+                    warn!(error = %e, "spotify: credential reload failed during reconnect");
+                    continue;
+                }
+                Err(e) => {
+                    warn!(error = %e, "spotify: credential task panicked during reconnect");
+                    continue;
+                }
+            };
 
         match session.connect(credentials, false).await {
             Ok(()) => return Ok(()),

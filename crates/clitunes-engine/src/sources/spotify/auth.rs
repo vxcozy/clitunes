@@ -44,12 +44,42 @@ pub fn default_credentials_path() -> Option<PathBuf> {
     })
 }
 
+/// Load cached credentials and refresh the access token. Returns
+/// session-ready `Credentials`. If no cache exists or refresh fails,
+/// returns an error — **never** prompts interactively.
+///
+/// This is the daemon-safe entry point. The daemon is a double-forked
+/// detached process with no terminal; interactive auth must be driven
+/// by the client via [`load_or_authenticate`].
+pub fn load_credentials(cred_path: &Path) -> Result<Credentials> {
+    let cached = load_cached(cred_path)?
+        .ok_or_else(|| anyhow::anyhow!("no cached Spotify credentials; run `clitunes auth` or play a Spotify URI from the client to authenticate"))?;
+
+    let token = refresh_access_token(&cached.refresh_token)
+        .map_err(|e| anyhow::anyhow!("Spotify token refresh failed: {e}"))?;
+
+    info!("Spotify token refreshed successfully");
+    // Update the cache with the new refresh token (Spotify may rotate it).
+    save_cached(
+        cred_path,
+        &CachedCredentials {
+            refresh_token: token.refresh_token,
+            consent_given: true,
+        },
+    )?;
+
+    Ok(Credentials::with_access_token(token.access_token))
+}
+
 /// Load cached credentials, refresh the access token, and return
 /// session-ready `Credentials`. If no cache exists or refresh fails,
 /// runs the interactive PKCE flow (which opens a browser).
 ///
 /// The very first invocation shows a TOS consent prompt; consent
 /// is persisted in the credential file so it only appears once.
+///
+/// **Client-side only.** Never call this from the daemon — use
+/// [`load_credentials`] instead.
 pub fn load_or_authenticate(cred_path: &Path) -> Result<Credentials> {
     // Try cached credentials first.
     if let Some(cached) = load_cached(cred_path)? {

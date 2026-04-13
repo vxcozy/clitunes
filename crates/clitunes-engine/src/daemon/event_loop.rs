@@ -297,6 +297,7 @@ fn run_source_pipeline(
                         let _ = event_tx.blocking_send(Event::SourceError {
                             source: "radio".into(),
                             error: e.to_string(),
+                            error_code: None,
                         });
                         current = SourceKind::Tone;
                         continue;
@@ -324,6 +325,7 @@ fn run_source_pipeline(
                     let _ = event_tx.blocking_send(Event::SourceError {
                         source: "local".into(),
                         error: e.to_string(),
+                        error_code: None,
                     });
                     current = SourceKind::Tone;
                     continue;

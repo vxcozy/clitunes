@@ -106,10 +106,16 @@ impl super::Source for SpotifySource {
                     .await
                     {
                         error!(error = %e, "spotify playback error");
+                        let err_code = if e.to_string().contains("premium_required") {
+                            Some("premium_required".into())
+                        } else {
+                            None
+                        };
                         let _ = event_tx
                             .send(Event::SourceError {
                                 source: "spotify".into(),
                                 error: e.to_string(),
+                                error_code: err_code,
                             })
                             .await;
                     }
@@ -147,6 +153,28 @@ async fn run_spotify_playback(
         .await
         .map_err(|e| anyhow::anyhow!("Spotify session connect failed: {e}"))?;
     info!("spotify: session connected");
+
+    // 2b. Check for Premium account. The `type` attribute may not be
+    //     populated immediately after connect (librespot receives product
+    //     info asynchronously). Give it a brief window to arrive.
+    for _ in 0..10 {
+        let catalogue = session
+            .user_data()
+            .attributes
+            .get("type")
+            .cloned()
+            .unwrap_or_default();
+        if !catalogue.is_empty() {
+            if catalogue != "premium" {
+                anyhow::bail!(
+                    "premium_required: Spotify Premium is required for playback. \
+                     Visit spotify.com/premium to upgrade."
+                );
+            }
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
 
     // 3. Parse the track URI.
     let spotify_uri = SpotifyUri::from_uri(uri_str)
@@ -226,11 +254,32 @@ async fn run_spotify_playback(
                                 break;
                             }
                             PlayerEvent::Unavailable { .. } => {
-                                warn!("spotify: track unavailable");
+                                let catalogue = session
+                                    .user_data()
+                                    .attributes
+                                    .get("type")
+                                    .cloned()
+                                    .unwrap_or_default();
+                                let (error, error_code) = if catalogue != "premium" {
+                                    warn!("spotify: track unavailable (non-premium account)");
+                                    (
+                                        "Spotify Premium is required for playback. \
+                                         Visit spotify.com/premium to upgrade."
+                                            .to_string(),
+                                        Some("premium_required".into()),
+                                    )
+                                } else {
+                                    warn!("spotify: track unavailable");
+                                    (
+                                        format!("track unavailable: {uri_str}"),
+                                        None,
+                                    )
+                                };
                                 let _ = event_tx
                                     .send(Event::SourceError {
                                         source: "spotify".into(),
-                                        error: format!("track unavailable: {uri_str}"),
+                                        error,
+                                        error_code,
                                     })
                                     .await;
                                 break;
@@ -243,6 +292,7 @@ async fn run_spotify_playback(
                                         .send(Event::SourceError {
                                             source: "spotify".into(),
                                             error: format!("session lost: {e}"),
+                                            error_code: None,
                                         })
                                         .await;
                                     break;

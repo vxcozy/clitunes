@@ -20,6 +20,8 @@ pub enum Event {
     SourceError {
         source: String,
         error: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        error_code: Option<String>,
     },
     DaemonShuttingDown {
         reason: String,
@@ -207,5 +209,48 @@ mod tests {
             "now_playing"
         );
         assert_eq!(Event::command_ok("x").topic(), "command");
+    }
+
+    #[test]
+    fn source_error_roundtrip_without_code() {
+        let event = Event::SourceError {
+            source: "radio".into(),
+            error: "connection refused".into(),
+            error_code: None,
+        };
+        let line = event.to_line();
+        // error_code should be omitted when None.
+        assert!(!line.contains("error_code"));
+        let parsed = Event::from_line(&line).unwrap();
+        assert_eq!(parsed, event);
+    }
+
+    #[test]
+    fn source_error_roundtrip_with_code() {
+        let event = Event::SourceError {
+            source: "spotify".into(),
+            error: "Premium required".into(),
+            error_code: Some("premium_required".into()),
+        };
+        let line = event.to_line();
+        assert!(line.contains("premium_required"));
+        let parsed = Event::from_line(&line).unwrap();
+        assert_eq!(parsed, event);
+    }
+
+    #[test]
+    fn source_error_backward_compat_no_error_code_field() {
+        // Old daemons (pre-v1.2) emit SourceError without error_code.
+        // serde(default) should deserialize missing field as None.
+        let json = r#"{"event":"source_error","data":{"source":"radio","error":"oops"}}"#;
+        let parsed = Event::from_line(json).unwrap();
+        assert_eq!(
+            parsed,
+            Event::SourceError {
+                source: "radio".into(),
+                error: "oops".into(),
+                error_code: None,
+            }
+        );
     }
 }

@@ -167,18 +167,17 @@ impl AppState {
                 error, error_code, ..
             } => {
                 tracing::warn!(target: "clitunes", %error, "source error from daemon");
-                let (pulse_msg, banner_msg) =
-                    if error_code.as_deref() == Some("premium_required") {
-                        (
-                            "Spotify Premium is required for playback".into(),
-                            "Spotify Premium required — visit spotify.com/premium".into(),
-                        )
-                    } else {
-                        (
-                            format!("Source error: {error}"),
-                            format!("Source error — pick another station. ({error})"),
-                        )
-                    };
+                let (pulse_msg, banner_msg) = if error_code.as_deref() == Some("premium_required") {
+                    (
+                        "Spotify Premium is required for playback".into(),
+                        "Spotify Premium required — visit spotify.com/premium".into(),
+                    )
+                } else {
+                    (
+                        format!("Source error: {error}"),
+                        format!("Source error — pick another station. ({error})"),
+                    )
+                };
                 self.error_pulse.trigger(pulse_msg);
                 self.picker_state.banner = Some(banner_msg);
                 self.picker_state.show();

@@ -1,3 +1,4 @@
+use clitunes_core::{BrowseItem, LibraryCategory};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -16,6 +17,11 @@ pub enum Event {
         album: Option<String>,
         station: Option<String>,
         raw_stream_title: Option<String>,
+        /// Optional cover-art URL (e.g. Spotify CDN). Added in v1.2;
+        /// `#[serde(default)]` preserves compatibility with older daemons
+        /// that do not emit this field.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        art_url: Option<String>,
     },
     SourceError {
         source: String,
@@ -51,6 +57,27 @@ pub enum Event {
         ok: bool,
         #[serde(skip_serializing_if = "Option::is_none")]
         error: Option<String>,
+    },
+    /// Results of a `Verb::Search` call, in provider-ranked order.
+    SearchResults {
+        query: String,
+        items: Vec<BrowseItem>,
+        total: u32,
+    },
+    /// Results of a `Verb::BrowseLibrary` call for one of the user's
+    /// saved-library categories.
+    LibraryResults {
+        category: LibraryCategory,
+        items: Vec<BrowseItem>,
+        total: u32,
+    },
+    /// Tracks of a specific playlist fetched via `Verb::BrowsePlaylist`.
+    PlaylistResults {
+        playlist_id: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        playlist_name: Option<String>,
+        items: Vec<BrowseItem>,
+        total: u32,
     },
 }
 
@@ -127,6 +154,7 @@ impl Event {
     /// let np = Event::NowPlayingChanged {
     ///     artist: None, title: None, album: None,
     ///     station: None, raw_stream_title: None,
+    ///     art_url: None,
     /// };
     /// assert_eq!(np.topic(), "now_playing");
     /// ```
@@ -142,6 +170,9 @@ impl Event {
             Self::PcmMeta { .. } => "pcm_meta",
             Self::PcmTap { .. } => "pcm_meta",
             Self::CommandResult { .. } => "command",
+            Self::SearchResults { .. } => "browse",
+            Self::LibraryResults { .. } => "browse",
+            Self::PlaylistResults { .. } => "browse",
         }
     }
 }
@@ -172,10 +203,41 @@ mod tests {
             album: None,
             station: Some("SomaFM".into()),
             raw_stream_title: Some("Boards of Canada - Roygbiv".into()),
+            art_url: None,
         };
         let line = event.to_line();
+        // art_url must be omitted when None (backward compat with v1.1 clients).
+        assert!(!line.contains("art_url"));
         let parsed = Event::from_line(&line).unwrap();
         assert_eq!(parsed, event);
+    }
+
+    #[test]
+    fn now_playing_with_art_url_roundtrip() {
+        let event = Event::NowPlayingChanged {
+            artist: Some("Daft Punk".into()),
+            title: Some("Get Lucky".into()),
+            album: Some("Random Access Memories".into()),
+            station: None,
+            raw_stream_title: None,
+            art_url: Some("https://i.scdn.co/image/abc".into()),
+        };
+        let line = event.to_line();
+        assert!(line.contains("i.scdn.co"));
+        let parsed = Event::from_line(&line).unwrap();
+        assert_eq!(parsed, event);
+    }
+
+    #[test]
+    fn now_playing_backward_compat_no_art_url_field() {
+        // Old daemons (pre-v1.2) emit NowPlayingChanged without art_url.
+        // serde(default) must deserialize missing field as None.
+        let json = r#"{"event":"now_playing_changed","data":{"artist":"x","title":"y","album":null,"station":null,"raw_stream_title":null}}"#;
+        let parsed = Event::from_line(json).unwrap();
+        match parsed {
+            Event::NowPlayingChanged { art_url, .. } => assert_eq!(art_url, None),
+            _ => panic!("wrong variant"),
+        }
     }
 
     #[test]
@@ -204,6 +266,7 @@ mod tests {
                 album: None,
                 station: None,
                 raw_stream_title: None,
+                art_url: None,
             }
             .topic(),
             "now_playing"
@@ -234,6 +297,54 @@ mod tests {
         };
         let line = event.to_line();
         assert!(line.contains("premium_required"));
+        let parsed = Event::from_line(&line).unwrap();
+        assert_eq!(parsed, event);
+    }
+
+    #[test]
+    fn search_results_roundtrip() {
+        let event = Event::SearchResults {
+            query: "daft punk".into(),
+            items: vec![BrowseItem {
+                title: "Get Lucky".into(),
+                artist: Some("Daft Punk".into()),
+                album: Some("Random Access Memories".into()),
+                uri: "spotify:track:2Foc5Q5nqNiosCNqttzHof".into(),
+                art_url: Some("https://i.scdn.co/image/x".into()),
+                duration_ms: Some(369_000),
+            }],
+            total: 1,
+        };
+        let line = event.to_line();
+        assert!(line.contains("search_results"));
+        assert!(line.contains("daft punk"));
+        let parsed = Event::from_line(&line).unwrap();
+        assert_eq!(parsed, event);
+        assert_eq!(event.topic(), "browse");
+    }
+
+    #[test]
+    fn library_results_roundtrip() {
+        let event = Event::LibraryResults {
+            category: LibraryCategory::SavedTracks,
+            items: vec![],
+            total: 0,
+        };
+        let line = event.to_line();
+        assert!(line.contains("saved_tracks"));
+        let parsed = Event::from_line(&line).unwrap();
+        assert_eq!(parsed, event);
+    }
+
+    #[test]
+    fn playlist_results_roundtrip() {
+        let event = Event::PlaylistResults {
+            playlist_id: "spotify:playlist:37i9dQZF1DXcBWIGoYBM5M".into(),
+            playlist_name: Some("Today's Top Hits".into()),
+            items: vec![],
+            total: 0,
+        };
+        let line = event.to_line();
         let parsed = Event::from_line(&line).unwrap();
         assert_eq!(parsed, event);
     }

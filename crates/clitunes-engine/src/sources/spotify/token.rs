@@ -50,8 +50,7 @@ impl SharedTokenProvider {
 
         Token {
             access_token: self.token.access_token.clone(),
-            expires_in: chrono::Duration::from_std(expires_in)
-                .unwrap_or(chrono::Duration::zero()),
+            expires_in: chrono::Duration::from_std(expires_in).unwrap_or(chrono::Duration::zero()),
             expires_at: Some(chrono::Utc::now() + expires_in),
             refresh_token: Some(self.token.refresh_token.clone()),
             scopes,
@@ -76,7 +75,6 @@ impl SharedTokenProvider {
         self.token = auth_result.token;
         Ok(())
     }
-
 }
 
 #[cfg(test)]

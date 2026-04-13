@@ -115,10 +115,9 @@ pub fn load_credentials(cred_path: &Path) -> Result<AuthResult> {
 /// Detection: `$SSH_CONNECTION` or `$SSH_TTY` is set AND neither
 /// `$DISPLAY` nor `$WAYLAND_DISPLAY` is set.
 pub fn is_headless() -> bool {
-    let ssh = std::env::var_os("SSH_CONNECTION").is_some()
-        || std::env::var_os("SSH_TTY").is_some();
-    let display = std::env::var_os("DISPLAY").is_some()
-        || std::env::var_os("WAYLAND_DISPLAY").is_some();
+    let ssh = std::env::var_os("SSH_CONNECTION").is_some() || std::env::var_os("SSH_TTY").is_some();
+    let display =
+        std::env::var_os("DISPLAY").is_some() || std::env::var_os("WAYLAND_DISPLAY").is_some();
     detect_headless(ssh, display)
 }
 

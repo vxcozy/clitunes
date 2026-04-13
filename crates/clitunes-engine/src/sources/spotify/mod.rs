@@ -138,11 +138,10 @@ async fn run_spotify_playback(
     //    Runs on a blocking thread to avoid starving the async runtime
     //    during the HTTP token-refresh round-trip.
     let cred_path_owned = cred_path.to_path_buf();
-    let auth_result =
-        tokio::task::spawn_blocking(move || auth::load_credentials(&cred_path_owned))
-            .await
-            .context("credential task panicked")?
-            .context("Spotify authentication failed")?;
+    let auth_result = tokio::task::spawn_blocking(move || auth::load_credentials(&cred_path_owned))
+        .await
+        .context("credential task panicked")?
+        .context("Spotify authentication failed")?;
     let credentials = auth_result.credentials;
 
     // 2. Connect session.
@@ -350,6 +349,11 @@ async fn handle_player_event(
 
             let title = sanitize(&audio_item.name);
 
+            // Covers are pre-sorted largest-first by librespot; pick the
+            // first URL if present. `CoverImage.url` is already a fully-formed
+            // CDN URL, so no additional processing is needed.
+            let art_url = audio_item.covers.first().map(|c| sanitize(&c.url));
+
             let _ = event_tx
                 .send(Event::NowPlayingChanged {
                     artist,
@@ -357,6 +361,7 @@ async fn handle_player_event(
                     album,
                     station: None,
                     raw_stream_title: Some(sanitize(uri)),
+                    art_url,
                 })
                 .await;
 

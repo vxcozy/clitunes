@@ -524,6 +524,15 @@ async fn dispatch_verbs(
             }
             Verb::Quit | Verb::Subscribe { .. } | Verb::Unsubscribe { .. } | Verb::Capabilities => {
             }
+            // Unit 5: verbs are defined in the protocol but dispatch lands in
+            // Unit 6 (webapi provider). Until then, reply with a clear error so
+            // clients can detect the capability gap instead of timing out.
+            Verb::Search { .. } | Verb::BrowseLibrary { .. } | Verb::BrowsePlaylist { .. } => {
+                let _ = reply_tx.try_send(Event::command_err(
+                    cmd_id,
+                    "browse/search not enabled in this build",
+                ));
+            }
         }
     }
 }

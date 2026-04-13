@@ -6,3 +6,5 @@
 
 pub mod auth;
 pub mod sink;
+
+pub use auth::{default_credentials_path, load_or_authenticate};

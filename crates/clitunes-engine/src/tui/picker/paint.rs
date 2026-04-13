@@ -41,6 +41,7 @@
 //! [`safe_chars`] as a final backstop before writing into the grid.
 
 use crate::tui::picker::curated_seed::{CuratedList, CURATED_SLOT_COUNT};
+use crate::tui::theme::{Theme, Token};
 use crate::visualiser::cell_grid::{Cell, CellGrid, Rgb};
 
 /// Header text above the station list. Short and warm so the first
@@ -56,17 +57,6 @@ pub const MIN_MODAL_W: u16 = 32;
 pub const MIN_MODAL_H: u16 = 19;
 pub const MAX_MODAL_W: u16 = 64;
 
-/// Palette. Chosen to be legible on the plasma/auralis backgrounds
-/// without clashing with either.
-const BORDER_FG: Rgb = Rgb::new(150, 160, 180);
-const BORDER_BG: Rgb = Rgb::new(10, 12, 18);
-const BODY_FG: Rgb = Rgb::new(200, 205, 215);
-const BODY_DIM_FG: Rgb = Rgb::new(110, 115, 130);
-const BODY_BG: Rgb = Rgb::new(10, 12, 18);
-const SELECT_FG: Rgb = Rgb::new(20, 22, 28);
-const SELECT_BG: Rgb = Rgb::new(230, 220, 140);
-const HEADER_FG: Rgb = Rgb::new(255, 255, 255);
-
 /// Public paint entry point. Paints the picker modal on top of
 /// whatever the visualiser drew into `grid`.
 ///
@@ -78,13 +68,26 @@ const HEADER_FG: Rgb = Rgb::new(255, 255, 255);
 /// `(x0, y0, x1, y1)` (exclusive upper bound), or `None` if the grid
 /// was too small to paint even the degraded banner — the caller can
 /// treat `None` as "the user will see the visualiser, no modal".
-pub fn paint_picker(grid: &mut CellGrid, list: &CuratedList, selected: usize) -> Option<Rect> {
+pub fn paint_picker(
+    grid: &mut CellGrid,
+    list: &CuratedList,
+    selected: usize,
+    theme: &Theme,
+) -> Option<Rect> {
+    let border_fg = theme.get(Token::Border);
+    let bg = theme.get(Token::Background);
+    let body_fg = theme.get(Token::Foreground);
+    let body_dim_fg = theme.get(Token::ForegroundDim);
+    let select_fg = theme.get(Token::Surface);
+    let select_bg = theme.get(Token::Accent);
+    let header_fg = theme.get(Token::ForegroundBright);
+
     let grid_w = grid.width();
     let grid_h = grid.height();
 
     // Catastrophically small — one-line banner fallback.
     if grid_w < 20 || grid_h < 6 {
-        return paint_fallback_banner(grid);
+        return paint_fallback_banner(grid, border_fg, bg);
     }
 
     let selected = selected.min(list.stations.len().saturating_sub(1));
@@ -93,7 +96,7 @@ pub fn paint_picker(grid: &mut CellGrid, list: &CuratedList, selected: usize) ->
     let chrome_min_h: u16 = 7; // border*2 + header*2 + footer*3
     let visible_body = (grid_h.saturating_sub(chrome_min_h)).min(CURATED_SLOT_COUNT as u16);
     if visible_body == 0 {
-        return paint_fallback_banner(grid);
+        return paint_fallback_banner(grid, border_fg, bg);
     }
     let modal_h = chrome_min_h + visible_body;
 
@@ -103,10 +106,10 @@ pub fn paint_picker(grid: &mut CellGrid, list: &CuratedList, selected: usize) ->
     let y1 = y0 + modal_h;
 
     // Fill body bg first — gives us a clean panel over the visualiser.
-    fill_rect(grid, x0, y0, x1, y1, BODY_BG);
+    fill_rect(grid, x0, y0, x1, y1, bg);
 
     // Border.
-    draw_border(grid, x0, y0, x1, y1);
+    draw_border(grid, x0, y0, x1, y1, border_fg, bg);
 
     // Header: two centered lines at rows y0+1 and y0+2.
     let inner_x0 = x0 + 2;
@@ -118,8 +121,8 @@ pub fn paint_picker(grid: &mut CellGrid, list: &CuratedList, selected: usize) ->
         inner_w,
         y0 + 1,
         HEADER_PRIMARY,
-        HEADER_FG,
-        BODY_BG,
+        header_fg,
+        bg,
     );
     write_centered(
         grid,
@@ -127,8 +130,8 @@ pub fn paint_picker(grid: &mut CellGrid, list: &CuratedList, selected: usize) ->
         inner_w,
         y0 + 2,
         HEADER_SECONDARY,
-        BODY_DIM_FG,
-        BODY_BG,
+        body_dim_fg,
+        bg,
     );
 
     // Body rows — scroll so the selected row is visible.
@@ -145,51 +148,43 @@ pub fn paint_picker(grid: &mut CellGrid, list: &CuratedList, selected: usize) ->
             let station = &list.stations[idx];
             let is_selected = idx == selected;
             let line = format_row(station, inner_w as usize);
-            let (fg, bg) = if is_selected {
-                (SELECT_FG, SELECT_BG)
+            let (fg, row_bg) = if is_selected {
+                (select_fg, select_bg)
             } else {
-                (BODY_FG, BODY_BG)
+                (body_fg, bg)
             };
             // Fill the whole row with bg first so the selection
             // highlight extends across the full width.
-            fill_rect_row(grid, inner_x0, inner_x1, body_y0 + row, bg);
-            write_text(grid, inner_x0, body_y0 + row, &line, fg, bg);
+            fill_rect_row(grid, inner_x0, inner_x1, body_y0 + row, row_bg);
+            write_text(grid, inner_x0, body_y0 + row, &line, fg, row_bg);
         }
     }
 
     // Footer.
     let footer_y = y1.saturating_sub(3);
-    write_centered(
-        grid,
-        inner_x0,
-        inner_w,
-        footer_y,
-        FOOTER,
-        BODY_DIM_FG,
-        BODY_BG,
-    );
+    write_centered(grid, inner_x0, inner_w, footer_y, FOOTER, body_dim_fg, bg);
     write_centered(
         grid,
         inner_x0,
         inner_w,
         footer_y + 1,
         FOOTER_VIZ,
-        BODY_DIM_FG,
-        BODY_BG,
+        body_dim_fg,
+        bg,
     );
 
     Some(Rect { x0, y0, x1, y1 })
 }
 
 /// Catastrophically-small fallback: one line of text at the top.
-fn paint_fallback_banner(grid: &mut CellGrid) -> Option<Rect> {
+fn paint_fallback_banner(grid: &mut CellGrid, fg: Rgb, bg: Rgb) -> Option<Rect> {
     if grid.width() < 8 || grid.height() == 0 {
         return None;
     }
     let msg = "PICKER — enlarge terminal";
     let x1 = grid.width().min(msg.len() as u16 + 4);
-    fill_rect_row(grid, 0, x1, 0, BORDER_BG);
-    write_text(grid, 1, 0, msg, BORDER_FG, BORDER_BG);
+    fill_rect_row(grid, 0, x1, 0, bg);
+    write_text(grid, 1, 0, msg, fg, bg);
     Some(Rect {
         x0: 0,
         y0: 0,
@@ -327,7 +322,7 @@ fn fill_rect_row(grid: &mut CellGrid, x0: u16, x1: u16, y: u16, bg: Rgb) {
     }
 }
 
-fn draw_border(grid: &mut CellGrid, x0: u16, y0: u16, x1: u16, y1: u16) {
+fn draw_border(grid: &mut CellGrid, x0: u16, y0: u16, x1: u16, y1: u16, fg: Rgb, bg: Rgb) {
     let w = grid.width();
     let h = grid.height();
     if x0 >= w || y0 >= h || x1 <= x0 || y1 <= y0 {
@@ -337,17 +332,17 @@ fn draw_border(grid: &mut CellGrid, x0: u16, y0: u16, x1: u16, y1: u16) {
     let y1i = y1.saturating_sub(1);
 
     for x in (x0 + 1)..x1i {
-        set_glyph(grid, x, y0, '─', BORDER_FG, BORDER_BG);
-        set_glyph(grid, x, y1i, '─', BORDER_FG, BORDER_BG);
+        set_glyph(grid, x, y0, '─', fg, bg);
+        set_glyph(grid, x, y1i, '─', fg, bg);
     }
     for y in (y0 + 1)..y1i {
-        set_glyph(grid, x0, y, '│', BORDER_FG, BORDER_BG);
-        set_glyph(grid, x1i, y, '│', BORDER_FG, BORDER_BG);
+        set_glyph(grid, x0, y, '│', fg, bg);
+        set_glyph(grid, x1i, y, '│', fg, bg);
     }
-    set_glyph(grid, x0, y0, '╭', BORDER_FG, BORDER_BG);
-    set_glyph(grid, x1i, y0, '╮', BORDER_FG, BORDER_BG);
-    set_glyph(grid, x0, y1i, '╰', BORDER_FG, BORDER_BG);
-    set_glyph(grid, x1i, y1i, '╯', BORDER_FG, BORDER_BG);
+    set_glyph(grid, x0, y0, '╭', fg, bg);
+    set_glyph(grid, x1i, y0, '╮', fg, bg);
+    set_glyph(grid, x0, y1i, '╰', fg, bg);
+    set_glyph(grid, x1i, y1i, '╯', fg, bg);
 }
 
 fn set_glyph(grid: &mut CellGrid, x: u16, y: u16, ch: char, fg: Rgb, bg: Rgb) {
@@ -390,6 +385,10 @@ mod tests {
     use super::*;
     use crate::tui::picker::curated_seed::baked_list;
 
+    fn default_theme() -> Theme {
+        Theme::default()
+    }
+
     #[test]
     fn truncate_or_pad_pads_short() {
         assert_eq!(truncate_or_pad("ab", 5), "ab   ");
@@ -430,7 +429,8 @@ mod tests {
     fn paint_picker_on_normal_grid_draws_something() {
         let mut grid = CellGrid::new(80, 24);
         let list = baked_list();
-        let rect = paint_picker(&mut grid, &list, 0).expect("rect");
+        let theme = default_theme();
+        let rect = paint_picker(&mut grid, &list, 0, &theme).expect("rect");
         assert!(rect.width() >= MIN_MODAL_W);
         assert!(rect.height() >= 6);
 
@@ -456,21 +456,23 @@ mod tests {
     fn paint_picker_selection_row_has_highlight_bg() {
         let mut grid = CellGrid::new(80, 24);
         let list = baked_list();
-        let rect = paint_picker(&mut grid, &list, 3).expect("rect");
+        let theme = default_theme();
+        let rect = paint_picker(&mut grid, &list, 3, &theme).expect("rect");
         // Body row 3 = rect.y0 + 3 + (3 - scroll). For a 12-item list
         // in a ~12-row window scroll is 0, so selection row = y0 + 6.
         let body_y0 = rect.y0 + 3;
         let selection_y = body_y0 + 3;
         let idx = (selection_y as usize) * 80 + (rect.x0 + 2) as usize;
         let cell = grid.cells()[idx];
-        assert_eq!(cell.bg, SELECT_BG);
+        assert_eq!(cell.bg, theme.get(Token::Accent));
     }
 
     #[test]
     fn paint_picker_degrades_on_tiny_grid() {
         let mut grid = CellGrid::new(10, 3);
         let list = baked_list();
-        let rect = paint_picker(&mut grid, &list, 0);
+        let theme = default_theme();
+        let rect = paint_picker(&mut grid, &list, 0, &theme);
         // Very small grids get the fallback banner, not a full modal.
         if let Some(r) = rect {
             assert_eq!(r.y0, 0);
@@ -482,8 +484,9 @@ mod tests {
     fn paint_picker_clamps_out_of_range_selection() {
         let mut grid = CellGrid::new(80, 24);
         let list = baked_list();
+        let theme = default_theme();
         // 999 > 11 — must not panic.
-        let _ = paint_picker(&mut grid, &list, 999);
+        let _ = paint_picker(&mut grid, &list, 999, &theme);
     }
 
     #[test]

@@ -16,7 +16,13 @@
 //! - [`picker`] is **visualiser-gated**: it paints into `CellGrid`, so
 //!   without the visualiser feature there is no paint surface.
 
+#[cfg(feature = "visualiser")]
+pub mod components;
 pub mod persistence;
+#[cfg(feature = "visualiser")]
+pub mod theme;
+#[cfg(feature = "visualiser")]
+pub mod transition;
 
 #[cfg(feature = "visualiser")]
 pub mod picker;

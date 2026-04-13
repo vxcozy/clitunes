@@ -15,6 +15,7 @@ use clitunes_engine::tui::picker::{
     key_from_bytes, load_curated, paint_picker, CuratedLoadOutcome, PickerAction, PickerKey,
     PickerState,
 };
+use clitunes_engine::tui::theme::Theme;
 use clitunes_engine::visualiser::{
     AnsiWriter, Auralis, Cascade, CellGrid, Metaballs, Plasma, Ripples, Starfield, Tideline,
     TuiContext, Tunnel, Visualiser, VisualiserId,
@@ -90,6 +91,8 @@ impl RenderLoop {
             .iter()
             .position(|v| v.id() == VisualiserId::Auralis)
             .unwrap_or(0);
+
+        let theme = Theme::default();
 
         let (curated, curated_outcome) = load_curated(None);
         match &curated_outcome {
@@ -184,7 +187,7 @@ impl RenderLoop {
             }
 
             if picker_state.visible {
-                let _ = paint_picker(&mut grid, &curated, picker_state.selected);
+                let _ = paint_picker(&mut grid, &curated, picker_state.selected, &theme);
             }
 
             writer.write_frame(&grid)?;

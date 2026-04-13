@@ -23,6 +23,15 @@ impl Rgb {
     pub const fn new(r: u8, g: u8, b: u8) -> Self {
         Self { r, g, b }
     }
+
+    /// Linear interpolation between two colours. `t` is clamped to `[0, 1]`.
+    pub fn lerp(self, other: Self, t: f32) -> Self {
+        let t = t.clamp(0.0, 1.0);
+        let r = self.r as f32 + (other.r as f32 - self.r as f32) * t;
+        let g = self.g as f32 + (other.g as f32 - self.g as f32) * t;
+        let b = self.b as f32 + (other.b as f32 - self.b as f32) * t;
+        Self::new(r as u8, g as u8, b as u8)
+    }
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -40,6 +49,16 @@ impl Cell {
             ch: ' ',
             fg: Rgb::BLACK,
             bg: Rgb::BLACK,
+        }
+    }
+
+    /// Interpolate between two cells. Colours are linearly blended;
+    /// the glyph snaps to `other.ch` once `t >= 0.5`.
+    pub fn lerp(self, other: Self, t: f32) -> Self {
+        Self {
+            ch: if t < 0.5 { self.ch } else { other.ch },
+            fg: self.fg.lerp(other.fg, t),
+            bg: self.bg.lerp(other.bg, t),
         }
     }
 }
@@ -130,6 +149,49 @@ mod tests {
         assert_eq!(grid.cells()[idx].ch, '▀');
         assert_eq!(grid.cells()[idx].fg, Rgb::new(10, 20, 30));
         assert_eq!(grid.cells()[idx].bg, Rgb::new(40, 50, 60));
+    }
+
+    #[test]
+    fn rgb_lerp_midpoint() {
+        let a = Rgb::new(0, 0, 0);
+        let b = Rgb::new(255, 255, 255);
+        let mid = a.lerp(b, 0.5);
+        // Rounding: 127 or 128 are both acceptable.
+        assert!((mid.r as i16 - 127).unsigned_abs() <= 1);
+        assert!((mid.g as i16 - 127).unsigned_abs() <= 1);
+        assert!((mid.b as i16 - 127).unsigned_abs() <= 1);
+    }
+
+    #[test]
+    fn rgb_lerp_boundaries() {
+        let a = Rgb::new(10, 20, 30);
+        let b = Rgb::new(200, 210, 220);
+        assert_eq!(a.lerp(b, 0.0), a);
+        assert_eq!(a.lerp(b, 1.0), b);
+    }
+
+    #[test]
+    fn rgb_lerp_clamps() {
+        let a = Rgb::new(100, 100, 100);
+        let b = Rgb::new(200, 200, 200);
+        assert_eq!(a.lerp(b, -0.5), a);
+        assert_eq!(a.lerp(b, 1.5), b);
+    }
+
+    #[test]
+    fn cell_lerp_char_snaps_at_half() {
+        let a = Cell {
+            ch: 'A',
+            fg: Rgb::BLACK,
+            bg: Rgb::BLACK,
+        };
+        let b = Cell {
+            ch: 'B',
+            fg: Rgb::new(255, 255, 255),
+            bg: Rgb::new(255, 255, 255),
+        };
+        assert_eq!(a.lerp(b, 0.3).ch, 'A');
+        assert_eq!(a.lerp(b, 0.7).ch, 'B');
     }
 
     #[test]

@@ -10,7 +10,7 @@ clitunes [OPTIONS]
 
 | Option | Description |
 |--------|-------------|
-| `--source <auto\|tone\|radio>` | Audio source (default: `auto` — resume last or show picker) |
+| `--source <auto\|tone\|radio\|spotify>` | Audio source (default: `auto` — resume last or show picker) |
 | `--station <uuid>` | Radio station UUID (with `--source radio`) |
 | `--measure-startup` | Print timing breakdown to stderr, exit after first frame |
 
@@ -37,6 +37,7 @@ clitunes volume <0-100>
 clitunes viz <name>
 clitunes source radio <uuid>
 clitunes source local <path>
+clitunes source spotify:<uri>
 ```
 
 ### Status query

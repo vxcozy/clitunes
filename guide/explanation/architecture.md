@@ -6,11 +6,11 @@ clitunes separates audio handling from rendering:
 
 ```
 clitunes (client)          clitunesd (daemon)
-┌──────────────┐           ┌──────────────────┐
-│ visualiser   │◄─ SPMC ──►│ radio / local src │
-│ picker       │   ring    │ PCM decode        │
-│ ANSI render  │           │ cpal audio out    │
-└──────┬───────┘           └────────┬──────────┘
+┌──────────────┐           ┌───────────────────────┐
+│ visualiser   │◄─ SPMC ──►│ radio / local / spotify│
+│ picker       │   ring    │ PCM decode + resample  │
+│ ANSI render  │           │ cpal audio out         │
+└──────┬───────┘           └────────┬───────────────┘
        │ Unix socket control bus    │
        └────────────────────────────┘
 ```
@@ -67,9 +67,25 @@ fast enough — the bottleneck is terminal parsing, not rendering.
 
 ## State persistence
 
-The client saves the last-played station UUID to `~/.config/clitunes/state.toml`
+The client saves the last-played source to `~/.config/clitunes/state.toml`
 using atomic file writes (write to temp file, then rename). On next launch with
-`--source auto` (the default), it resumes the last station automatically.
+`--source auto` (the default), it resumes the last source automatically —
+whether that was a radio station UUID or a Spotify track URI.
+
+## Spotify integration
+
+Spotify playback uses [librespot](https://github.com/librespot-org/librespot),
+a reverse-engineered Spotify client library. librespot decodes audio at
+44100 Hz; the daemon resamples to 48000 Hz via
+[rubato](https://github.com/HEnquist/rubato) (sinc interpolation) before
+feeding the SPMC ring and cpal output. This matches the pipeline's native
+`PcmFormat::STUDIO` rate so radio, local, and Spotify sources all share the
+same output path.
+
+Authentication uses OAuth2 PKCE with credential caching at
+`~/.config/clitunes/spotify/credentials.json`. The Spotify source is
+feature-gated (`spotify`) to keep the daemon lean when Spotify support is
+not needed.
 
 ## Idle shutdown
 

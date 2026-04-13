@@ -55,7 +55,7 @@ client can correlate request/response.
 | `next` | — | Advance to next track (queue/local; no-op for radio) |
 | `prev` | — | Go to previous track |
 | `volume` | `{"level": 0..100}` | Set output volume |
-| `source` | `{"type":"local","path":"..."}` or `{"type":"radio","uuid":"..."}` | Switch source |
+| `source` | `{"type":"local","path":"..."}` or `{"type":"radio","uuid":"..."}` or `{"type":"spotify","uri":"..."}` | Switch source |
 | `viz` | `{"name": "auralis"}` | Switch visualiser |
 | `layout` | `{"name": "default"}` | Switch layout |
 | `picker` | — | Show the curated picker overlay |

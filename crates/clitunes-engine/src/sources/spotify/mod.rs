@@ -144,7 +144,7 @@ async fn run_spotify_playback(
         .map_err(|e| anyhow::anyhow!("invalid Spotify URI '{uri_str}': {e}"))?;
 
     // 4. Create our custom sink with the PCM channel.
-    let (sink, pcm_rx) = sink::channel();
+    let (sink, pcm_rx, pcm_notify) = sink::channel();
 
     // 5. Create the librespot Player with our sink as the backend.
     let player_config = PlayerConfig::default();
@@ -163,15 +163,15 @@ async fn run_spotify_playback(
     info!(uri = %uri_str, "spotify: track loaded");
 
     // 8. PCM drain + event monitoring loop.
-    // We poll both the PCM receiver and player events in the same loop.
-    // `writer` isn't Send so we can't move it into a spawned task.
+    // `writer` isn't Send so we can't move it into a spawned task —
+    // everything runs in the same task, woken by `tokio::select!`.
     loop {
         if stop.load(Ordering::Relaxed) {
             player.stop();
             break;
         }
 
-        // Drain available PCM frames (non-blocking).
+        // Drain all available PCM frames (non-blocking).
         loop {
             match pcm_rx.try_recv() {
                 Ok(frames) => {
@@ -185,55 +185,68 @@ async fn run_spotify_playback(
             }
         }
 
-        // Poll player events (non-blocking via try_recv).
-        match player_events.try_recv() {
-            Ok(event) => {
-                handle_player_event(&event, event_tx, uri_str).await;
+        // Wait for the next wake-up: PCM data, player event, or stop check.
+        tokio::select! {
+            _ = pcm_notify.notified() => {
+                // PCM data available — loop back to drain.
+            }
+            event = player_events.recv() => {
                 match event {
-                    PlayerEvent::EndOfTrack { .. } => {
-                        info!("spotify: end of track");
-                        break;
-                    }
-                    PlayerEvent::Stopped { .. } => {
-                        info!("spotify: player stopped");
-                        break;
-                    }
-                    PlayerEvent::Unavailable { .. } => {
-                        warn!("spotify: track unavailable");
-                        let _ = event_tx
-                            .send(Event::SourceError {
-                                source: "spotify".into(),
-                                error: format!("track unavailable: {uri_str}"),
-                            })
-                            .await;
-                        break;
-                    }
-                    PlayerEvent::SessionDisconnected { .. } => {
-                        warn!("spotify: session disconnected, attempting reconnect");
-                        if let Err(e) = attempt_reconnect(&session, cred_path).await {
-                            error!(error = %e, "spotify: reconnect failed");
-                            let _ = event_tx
-                                .send(Event::SourceError {
-                                    source: "spotify".into(),
-                                    error: format!("session lost: {e}"),
-                                })
-                                .await;
-                            break;
+                    Some(event) => {
+                        handle_player_event(&event, event_tx, uri_str).await;
+                        match event {
+                            PlayerEvent::EndOfTrack { .. } => {
+                                info!("spotify: end of track");
+                                break;
+                            }
+                            PlayerEvent::Stopped { .. } => {
+                                info!("spotify: player stopped");
+                                break;
+                            }
+                            PlayerEvent::Unavailable { .. } => {
+                                warn!("spotify: track unavailable");
+                                let _ = event_tx
+                                    .send(Event::SourceError {
+                                        source: "spotify".into(),
+                                        error: format!("track unavailable: {uri_str}"),
+                                    })
+                                    .await;
+                                break;
+                            }
+                            PlayerEvent::SessionDisconnected { .. } => {
+                                warn!("spotify: session disconnected, attempting reconnect");
+                                if let Err(e) = attempt_reconnect(&session, cred_path).await {
+                                    error!(error = %e, "spotify: reconnect failed");
+                                    let _ = event_tx
+                                        .send(Event::SourceError {
+                                            source: "spotify".into(),
+                                            error: format!("session lost: {e}"),
+                                        })
+                                        .await;
+                                    break;
+                                }
+                                info!("spotify: reconnected, reloading track");
+                                match SpotifyUri::from_uri(uri_str) {
+                                    Ok(uri) => player.load(uri, true, 0),
+                                    Err(e) => {
+                                        error!(error = %e, "spotify: failed to re-parse URI after reconnect");
+                                        break;
+                                    }
+                                }
+                            }
+                            _ => {}
                         }
-                        info!("spotify: reconnected");
                     }
-                    _ => {}
+                    None => {
+                        debug!("spotify: player event channel closed");
+                        break;
+                    }
                 }
             }
-            Err(tokio::sync::mpsc::error::TryRecvError::Empty) => {}
-            Err(tokio::sync::mpsc::error::TryRecvError::Disconnected) => {
-                debug!("spotify: player event channel closed");
-                break;
+            _ = tokio::time::sleep(Duration::from_millis(50)) => {
+                // Periodic stop-flag check.
             }
         }
-
-        // Yield briefly to avoid busy-spinning.
-        tokio::time::sleep(Duration::from_millis(5)).await;
     }
 
     info!("spotify: playback ended");
@@ -350,5 +363,77 @@ mod tests {
     fn spotify_uri_parse_invalid() {
         let uri = SpotifyUri::from_uri("not-a-uri");
         assert!(uri.is_err());
+    }
+
+    #[tokio::test]
+    async fn handle_player_event_playing_no_emit() {
+        let (tx, mut rx) = tokio::sync::mpsc::channel(8);
+        let event = PlayerEvent::Playing {
+            play_request_id: 1,
+            track_id: SpotifyUri::from_uri("spotify:track:4PTG3Z6ehGkBFwjybzWkR8").unwrap(),
+            position_ms: 5000,
+        };
+        handle_player_event(&event, &tx, "spotify:track:4PTG3Z6ehGkBFwjybzWkR8").await;
+
+        // Playing events are debug-logged but don't emit daemon events.
+        assert!(rx.try_recv().is_err(), "Playing should not emit an event");
+    }
+
+    #[tokio::test]
+    async fn handle_player_event_paused_no_emit() {
+        let (tx, mut rx) = tokio::sync::mpsc::channel(8);
+        let event = PlayerEvent::Paused {
+            play_request_id: 1,
+            track_id: SpotifyUri::from_uri("spotify:track:4PTG3Z6ehGkBFwjybzWkR8").unwrap(),
+            position_ms: 10_000,
+        };
+        handle_player_event(&event, &tx, "spotify:track:4PTG3Z6ehGkBFwjybzWkR8").await;
+
+        assert!(rx.try_recv().is_err(), "Paused should not emit an event");
+    }
+
+    #[test]
+    fn sink_channel_produces_notify() {
+        let (_sink, _rx, notify) = sink::channel();
+        // Verify the notify is functional (doesn't panic).
+        notify.notify_one();
+    }
+
+    #[tokio::test]
+    async fn sink_notify_fires_on_pcm_send() {
+        use librespot_playback::audio_backend::Sink;
+        use librespot_playback::convert::Converter;
+        use librespot_playback::decoder::AudioPacket;
+
+        let (mut sink_inst, _rx, notify) = sink::channel();
+        sink_inst.start().expect("start should succeed");
+
+        // Send enough data to fill at least one chunk.
+        let num_frames: usize = 2048;
+        let samples: Vec<f64> = vec![0.0; num_frames * 2];
+        let mut converter = Converter::new(None);
+        sink_inst
+            .write(AudioPacket::Samples(samples), &mut converter)
+            .expect("write should succeed");
+
+        // The notify should have been triggered when frames were sent.
+        // Use a timeout to verify it resolves quickly.
+        let result = tokio::time::timeout(Duration::from_millis(100), notify.notified()).await;
+        assert!(result.is_ok(), "notify should fire after PCM send");
+    }
+
+    #[test]
+    fn source_construction_preserves_fields() {
+        let (tx, _rx) = tokio::sync::mpsc::channel(1);
+        let source = SpotifySource::new(
+            "spotify:track:4PTG3Z6ehGkBFwjybzWkR8".into(),
+            PathBuf::from("/home/user/.config/clitunes/spotify-creds.json"),
+            tx,
+        );
+        assert_eq!(source.uri, "spotify:track:4PTG3Z6ehGkBFwjybzWkR8");
+        assert_eq!(
+            source.credentials_path,
+            PathBuf::from("/home/user/.config/clitunes/spotify-creds.json")
+        );
     }
 }

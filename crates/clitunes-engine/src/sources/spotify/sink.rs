@@ -5,6 +5,7 @@
 //! through an `mpsc::SyncSender` to the blocking source thread.
 
 use std::sync::mpsc::SyncSender;
+use std::sync::Arc;
 
 use librespot_playback::audio_backend::{Open, Sink, SinkError, SinkResult};
 use librespot_playback::config::AudioFormat as LibrespotAudioFormat;
@@ -16,6 +17,7 @@ use rubato::{
     Async, FixedAsync, Indexing, Resampler, SincInterpolationParameters, SincInterpolationType,
     WindowFunction,
 };
+use tokio::sync::Notify;
 
 use clitunes_core::StereoFrame;
 
@@ -33,18 +35,29 @@ const CHANNEL_CAPACITY: usize = 32;
 ///
 /// The receiver should be consumed by the source thread that feeds the daemon
 /// audio pipeline. The sink is handed to librespot's player.
-pub fn channel() -> (SpotifySink, std::sync::mpsc::Receiver<Vec<StereoFrame>>) {
+pub fn channel() -> (
+    SpotifySink,
+    std::sync::mpsc::Receiver<Vec<StereoFrame>>,
+    Arc<Notify>,
+) {
     let (tx, rx) = std::sync::mpsc::sync_channel(CHANNEL_CAPACITY);
+    let notify = Arc::new(Notify::new());
     let mut sink = SpotifySink::new();
     sink.set_sender(tx);
-    (sink, rx)
+    sink.pcm_notify = Some(Arc::clone(&notify));
+    (sink, rx, notify)
 }
 
 pub struct SpotifySink {
     tx: Option<SyncSender<Vec<StereoFrame>>>,
+    pcm_notify: Option<Arc<Notify>>,
     resampler: Option<Async<f64>>,
     accum_l: Vec<f64>,
     accum_r: Vec<f64>,
+    /// Reusable per-channel input buffers for the resampler (avoids 3 allocs/chunk).
+    channel_bufs: Vec<Vec<f64>>,
+    /// Reusable output buffer for resampled frames.
+    output_buf: Vec<StereoFrame>,
     chunk_size: usize,
 }
 
@@ -52,9 +65,12 @@ impl SpotifySink {
     fn new() -> Self {
         Self {
             tx: None,
+            pcm_notify: None,
             resampler: None,
             accum_l: Vec::new(),
             accum_r: Vec::new(),
+            channel_bufs: vec![Vec::new(), Vec::new()],
+            output_buf: Vec::new(),
             chunk_size: DEFAULT_CHUNK_SIZE,
         }
     }
@@ -96,8 +112,11 @@ impl SpotifySink {
             .as_ref()
             .ok_or_else(|| SinkError::NotConnected("sender not set".into()))?;
 
-        let channels: Vec<Vec<f64>> = vec![left.to_vec(), right.to_vec()];
-        let input = SequentialSliceOfVecs::new(channels.as_slice(), 2, left.len())
+        self.channel_bufs[0].clear();
+        self.channel_bufs[0].extend_from_slice(left);
+        self.channel_bufs[1].clear();
+        self.channel_bufs[1].extend_from_slice(right);
+        let input = SequentialSliceOfVecs::new(self.channel_bufs.as_slice(), 2, left.len())
             .map_err(|e| SinkError::OnWrite(format!("audioadapter wrap failed: {e}")))?;
 
         let output = resampler
@@ -105,16 +124,20 @@ impl SpotifySink {
             .map_err(|e| SinkError::OnWrite(format!("rubato resample failed: {e}")))?;
 
         let out_frames = output.frames();
-        let mut frames = Vec::with_capacity(out_frames);
+        self.output_buf.clear();
+        self.output_buf.reserve(out_frames);
         for i in 0..out_frames {
             let l = output.read_sample(0, i).unwrap_or(0.0) as f32;
             let r = output.read_sample(1, i).unwrap_or(0.0) as f32;
-            frames.push(StereoFrame { l, r });
+            self.output_buf.push(StereoFrame { l, r });
         }
 
-        if !frames.is_empty() {
-            tx.send(frames)
+        if !self.output_buf.is_empty() {
+            tx.send(std::mem::take(&mut self.output_buf))
                 .map_err(|_| SinkError::NotConnected("receiver dropped".into()))?;
+            if let Some(notify) = &self.pcm_notify {
+                notify.notify_one();
+            }
         }
 
         Ok(())
@@ -168,16 +191,20 @@ impl SpotifySink {
             .process_into_buffer(&input, &mut buffer_out, Some(&indexing))
             .map_err(|e| SinkError::OnWrite(format!("rubato flush failed: {e}")))?;
 
-        let mut frames = Vec::with_capacity(out_written);
+        self.output_buf.clear();
+        self.output_buf.reserve(out_written);
         for i in 0..out_written {
             let l = buffer_out.read_sample(0, i).unwrap_or(0.0) as f32;
             let r = buffer_out.read_sample(1, i).unwrap_or(0.0) as f32;
-            frames.push(StereoFrame { l, r });
+            self.output_buf.push(StereoFrame { l, r });
         }
 
-        if !frames.is_empty() {
+        if !self.output_buf.is_empty() {
             // Best-effort send on stop; don't error if the receiver is gone.
-            let _ = tx.send(frames);
+            let _ = tx.send(std::mem::take(&mut self.output_buf));
+            if let Some(notify) = &self.pcm_notify {
+                notify.notify_one();
+            }
         }
 
         Ok(())

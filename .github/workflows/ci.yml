@@ -72,3 +72,12 @@ jobs:
             exit 1
           fi
           echo "D15 holds — clitunesd has no wgpu/ratatui/crossterm in its dep graph."
+      - name: Assert librespot excluded from non-spotify builds
+        run: |
+          set -euo pipefail
+          if cargo tree -p clitunesd --no-default-features --features radio,local,audio,decode 2>/dev/null | grep -qE 'librespot'; then
+            echo "::error::D15 violated: librespot appears without spotify feature"
+            cargo tree -p clitunesd --no-default-features --features radio,local,audio,decode | grep -E 'librespot'
+            exit 1
+          fi
+          echo "D15 holds — librespot excluded from non-spotify builds."

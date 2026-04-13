@@ -462,7 +462,14 @@ impl CliMode {
                             .clone();
                         Ok(CliMode::Headless(Verb::Source(SourceArg::Local { path })))
                     }
-                    other => anyhow::bail!("unknown source type: {other}. Expected: radio, local"),
+                    other if other.starts_with("spotify:") => {
+                        Ok(CliMode::Headless(Verb::Source(SourceArg::Spotify {
+                            uri: other.to_string(),
+                        })))
+                    }
+                    other => anyhow::bail!(
+                        "unknown source type: {other}. Expected: radio, local, spotify:<uri>"
+                    ),
                 }
             }
             "status" => {

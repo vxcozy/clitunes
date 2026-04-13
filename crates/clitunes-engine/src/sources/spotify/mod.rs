@@ -127,8 +127,8 @@ async fn run_spotify_playback(
     stop: &AtomicBool,
 ) -> Result<()> {
     // 1. Authenticate.
-    let credentials = auth::load_or_authenticate(cred_path)
-        .context("Spotify authentication failed")?;
+    let credentials =
+        auth::load_or_authenticate(cred_path).context("Spotify authentication failed")?;
 
     // 2. Connect session.
     let session_config = SessionConfig::default();
@@ -249,16 +249,9 @@ async fn handle_player_event(
     match event {
         PlayerEvent::TrackChanged { audio_item } => {
             let (artist, album) = match &audio_item.unique_fields {
-                librespot_metadata::audio::UniqueFields::Track {
-                    artists,
-                    album,
-                    ..
-                } => {
-                    let artist_names: Vec<&str> = artists
-                        .0
-                        .iter()
-                        .map(|a| a.name.as_str())
-                        .collect();
+                librespot_metadata::audio::UniqueFields::Track { artists, album, .. } => {
+                    let artist_names: Vec<&str> =
+                        artists.0.iter().map(|a| a.name.as_str()).collect();
                     (
                         Some(sanitize(&artist_names.join(", "))),
                         Some(sanitize(album)),
@@ -296,10 +289,7 @@ async fn handle_player_event(
 }
 
 /// Attempt session reconnect with exponential backoff (1s, 2s, 4s).
-async fn attempt_reconnect(
-    session: &Session,
-    cred_path: &std::path::Path,
-) -> Result<()> {
+async fn attempt_reconnect(session: &Session, cred_path: &std::path::Path) -> Result<()> {
     let delays = [
         Duration::from_secs(1),
         Duration::from_secs(2),

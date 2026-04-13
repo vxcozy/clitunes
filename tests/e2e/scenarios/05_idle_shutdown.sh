@@ -53,7 +53,7 @@ e2e_log "daemon: $DAEMON_BIN"
 e2e_log "workdir: $WORKDIR"
 
 # Start daemon with a 2-second idle timeout.
-"$DAEMON_BIN" --idle-timeout 2 > "$WORKDIR/daemon_stdout.log" 2> "$WORKDIR/daemon_stderr.log" &
+"$DAEMON_BIN" --foreground --idle-timeout 2 > "$WORKDIR/daemon_stdout.log" 2> "$WORKDIR/daemon_stderr.log" &
 DAEMON_PID=$!
 e2e_log "daemon started with --idle-timeout 2 (pid $DAEMON_PID)"
 sleep 0.5
@@ -87,7 +87,7 @@ else
 fi
 
 # Verify daemon logs mention the idle shutdown.
-assert_log_contains "$WORKDIR/daemon_stderr.log" 'idle\|timeout\|shutdown' 'idle shutdown logged'
+assert_log_contains "$WORKDIR/daemon_stderr.log" 'idle|timeout|shutdown' 'idle shutdown logged'
 
 echo
 e2e_log "scenario passed"

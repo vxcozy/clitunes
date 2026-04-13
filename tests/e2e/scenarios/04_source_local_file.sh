@@ -59,23 +59,23 @@ generate_wav_fixture "$WAV_PATH" 2 440
 assert_file_nonempty "$WAV_PATH"
 
 # Start the daemon.
-"$DAEMON_BIN" > "$WORKDIR/daemon_stdout.log" 2> "$WORKDIR/daemon_stderr.log" &
+"$DAEMON_BIN" --foreground > "$WORKDIR/daemon_stdout.log" 2> "$WORKDIR/daemon_stderr.log" &
 DAEMON_PID=$!
 e2e_log "daemon started (pid $DAEMON_PID)"
 sleep 1
 
 # Set source to local file.
-"$BIN" source "local:${WAV_PATH}" > "$WORKDIR/source_stdout.log" 2> "$WORKDIR/source_stderr.log" || true
+"$BIN" source local "${WAV_PATH}" > "$WORKDIR/source_stdout.log" 2> "$WORKDIR/source_stderr.log" || true
 
 # Wait for playback to complete (2s file + 2s buffer).
-wait_for_log "$WORKDIR/daemon_stderr.log" 'frames\|PlaybackComplete\|finished\|decoded' 8
+wait_for_log "$WORKDIR/daemon_stderr.log" 'frames|PlaybackComplete|finished|decoded' 8
 
 # Verify daemon logs reference frame processing.
 # A 2-second 44100 Hz WAV = 88200 frames. Accept any frame count mention.
-assert_log_contains "$WORKDIR/daemon_stderr.log" 'frame\|sample\|decoded\|pcm' 'daemon processed audio frames'
+assert_log_contains "$WORKDIR/daemon_stderr.log" 'frame|sample|decoded|pcm' 'daemon processed audio frames'
 
 # Verify the WAV path appears in daemon logs (source was accepted).
-assert_log_contains "$WORKDIR/daemon_stderr.log" '440hz\|fixture\|local' 'local source path acknowledged'
+assert_log_contains "$WORKDIR/daemon_stderr.log" '440hz|fixture|local' 'local source path acknowledged'
 
 echo
 e2e_log "scenario passed"

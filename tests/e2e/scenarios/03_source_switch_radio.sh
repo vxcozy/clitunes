@@ -73,10 +73,10 @@ sleep 1
 "$BIN" source "radio:${RADIO_UUID}" > "$WORKDIR/source_stdout.log" 2> "$WORKDIR/source_stderr.log" || true
 
 # Wait for NowPlayingChanged event in daemon logs (up to 10 seconds).
-wait_for_log "$WORKDIR/daemon_stderr.log" 'NowPlayingChanged\|now_playing' 10
+wait_for_log "$WORKDIR/daemon_stderr.log" 'NowPlayingChanged|now_playing' 10
 
 # Assert the station identifier appears in daemon logs.
-assert_log_contains "$WORKDIR/daemon_stderr.log" "${RADIO_UUID}\|radio" 'radio source activated'
+assert_log_contains "$WORKDIR/daemon_stderr.log" "${RADIO_UUID}|radio" 'radio source activated'
 
 # Check status reports the radio source.
 "$BIN" status --json > "$WORKDIR/status_radio.json" 2>/dev/null || true

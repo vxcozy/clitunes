@@ -158,8 +158,11 @@ impl SpotifySink {
 
         let out_frames = resampler.output_frames_next();
         let out_channels = resampler.nbr_channels();
-        let mut buffer_out =
-            rubato::audioadapter_buffers::owned::InterleavedOwned::<f64>::new(0.0, out_channels, out_frames);
+        let mut buffer_out = rubato::audioadapter_buffers::owned::InterleavedOwned::<f64>::new(
+            0.0,
+            out_channels,
+            out_frames,
+        );
 
         let (_in_used, out_written) = resampler
             .process_into_buffer(&input, &mut buffer_out, Some(&indexing))

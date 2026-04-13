@@ -82,7 +82,10 @@ fn run() -> Result<ExitCode> {
     let stop = Arc::new(AtomicBool::new(false));
     install_signal_handler(Arc::clone(&stop))?;
 
-    let idle = Arc::new(IdleTimer::new());
+    let idle = Arc::new(match args.idle_timeout_secs {
+        Some(secs) => IdleTimer::with_window(Duration::from_secs(secs)),
+        None => IdleTimer::new(),
+    });
     let socket_path = runtime.join("clitunesd.sock");
 
     let rt = tokio::runtime::Builder::new_multi_thread()
@@ -170,17 +173,31 @@ fn install_signal_handler(stop: Arc<AtomicBool>) -> Result<()> {
 struct CliArgs {
     foreground: bool,
     help: bool,
+    idle_timeout_secs: Option<u64>,
 }
 
 impl CliArgs {
     fn parse_from_env() -> Result<Self> {
         let mut out = Self::default();
-        for arg in std::env::args().skip(1) {
-            match arg.as_str() {
+        let args: Vec<String> = std::env::args().skip(1).collect();
+        let mut i = 0;
+        while i < args.len() {
+            match args[i].as_str() {
                 "-f" | "--foreground" => out.foreground = true,
                 "-h" | "--help" => out.help = true,
+                "--idle-timeout" => {
+                    i += 1;
+                    let val = args
+                        .get(i)
+                        .ok_or_else(|| anyhow::anyhow!("--idle-timeout requires a value"))?;
+                    out.idle_timeout_secs = Some(
+                        val.parse()
+                            .map_err(|_| anyhow::anyhow!("invalid idle timeout: {val}"))?,
+                    );
+                }
                 other => anyhow::bail!("unknown argument: {other}"),
             }
+            i += 1;
         }
         Ok(out)
     }
@@ -192,11 +209,12 @@ fn print_help() {
 clitunesd — clitunes audio daemon
 
 USAGE:
-    clitunesd [--foreground]
+    clitunesd [--foreground] [--idle-timeout <seconds>]
 
 OPTIONS:
-    -f, --foreground    Do not fork; log to stderr as well as the rotating log file
-    -h, --help          Show this help
+    -f, --foreground            Do not fork; log to stderr as well as the rotating log file
+        --idle-timeout <secs>   Override idle shutdown timeout (default: 30s)
+    -h, --help                  Show this help
 
 The daemon acquires an exclusive flock at $XDG_RUNTIME_DIR/clitunes/clitunesd.lock
 (or $TMPDIR/$USER/clitunes/clitunesd.lock on macOS). A second invocation while

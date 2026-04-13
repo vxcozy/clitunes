@@ -53,7 +53,7 @@ e2e_log "daemon: $DAEMON_BIN"
 e2e_log "workdir: $WORKDIR"
 
 # Start the daemon explicitly so we can issue headless commands against it.
-"$DAEMON_BIN" > "$WORKDIR/daemon_stdout.log" 2> "$WORKDIR/daemon_stderr.log" &
+"$DAEMON_BIN" --foreground > "$WORKDIR/daemon_stdout.log" 2> "$WORKDIR/daemon_stderr.log" &
 DAEMON_PID=$!
 e2e_log "daemon started (pid $DAEMON_PID)"
 sleep 1
@@ -79,8 +79,8 @@ assert_file_nonempty "$WORKDIR/status_pause.json"
 assert_json_status "$WORKDIR/status_pause.json" ".state" "paused" "state is paused after pause"
 
 # Verify daemon logs show the transitions.
-assert_log_contains "$WORKDIR/daemon_stderr.log" 'play\|Playing' 'daemon received play command'
-assert_log_contains "$WORKDIR/daemon_stderr.log" 'pause\|Paused' 'daemon received pause command'
+assert_log_contains "$WORKDIR/daemon_stderr.log" 'play|Playing' 'daemon received play command'
+assert_log_contains "$WORKDIR/daemon_stderr.log" 'pause|Paused' 'daemon received pause command'
 
 echo
 e2e_log "scenario passed"

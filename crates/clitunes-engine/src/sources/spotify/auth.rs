@@ -8,7 +8,7 @@ use std::io::Write as _;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 
-use anyhow::{Context, Result, bail};
+use anyhow::{bail, Context, Result};
 use librespot_core::authentication::Credentials;
 use librespot_oauth::{OAuthClientBuilder, OAuthError, OAuthToken};
 use serde::{Deserialize, Serialize};
@@ -161,9 +161,8 @@ fn load_cached(path: &Path) -> Result<Option<CachedCredentials>> {
         Ok(s) => s,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Err(e) => {
-            return Err(e).with_context(|| {
-                format!("reading Spotify credentials from {}", path.display())
-            });
+            return Err(e)
+                .with_context(|| format!("reading Spotify credentials from {}", path.display()));
         }
     };
     let creds: CachedCredentials = serde_json::from_str(&raw)

@@ -118,18 +118,28 @@ impl DaemonEventLoop {
 
         let (source_cmd_tx, source_cmd_rx) = std::sync::mpsc::channel::<SourceCommand>();
 
+        let last_state: Arc<Mutex<Option<Event>>> = Arc::new(Mutex::new(None));
+
         let source_stop = Arc::clone(&self.stop);
         let source_event_tx = event_tx.clone();
+        let source_last_state = Arc::clone(&last_state);
         let source_thread = thread::Builder::new()
             .name("clitunesd-source".into())
             .spawn(move || {
-                run_source_pipeline(tee, source_cmd_rx, source_stop, source_event_tx);
+                run_source_pipeline(
+                    tee,
+                    source_cmd_rx,
+                    source_stop,
+                    source_event_tx,
+                    source_last_state,
+                );
             })
             .context("spawn source pipeline")?;
 
         let pcm_tap = pcm_tap_event.clone();
         let verb_stop = Arc::clone(&self.stop);
         let verb_ev_tx = event_tx.clone();
+        let verb_last_state = Arc::clone(&last_state);
         tokio::spawn(async move {
             dispatch_verbs(
                 &mut verb_rx,
@@ -137,6 +147,7 @@ impl DaemonEventLoop {
                 &verb_ev_tx,
                 &pcm_tap,
                 &verb_stop,
+                &verb_last_state,
             )
             .await;
         });
@@ -187,6 +198,7 @@ fn run_source_pipeline(
     cmd_rx: std::sync::mpsc::Receiver<SourceCommand>,
     stop: Arc<AtomicBool>,
     event_tx: mpsc::Sender<Event>,
+    last_state: Arc<Mutex<Option<Event>>>,
 ) {
     let pending: Arc<Mutex<Option<SourceCommand>>> = Arc::new(Mutex::new(None));
     let source_stop = Arc::new(AtomicBool::new(false));
@@ -224,9 +236,14 @@ fn run_source_pipeline(
 
         source_stop.store(false, Ordering::SeqCst);
 
+        let send_state = |evt: Event| {
+            *last_state.lock() = Some(evt.clone());
+            let _ = event_tx.blocking_send(evt);
+        };
+
         match &current {
             SourceKind::Tone => {
-                let _ = event_tx.blocking_send(Event::StateChanged {
+                send_state(Event::StateChanged {
                     state: PlayState::Playing,
                     source: Some("tone".into()),
                     station_or_path: None,
@@ -240,7 +257,7 @@ fn run_source_pipeline(
                 let config = RadioConfig::new(station.clone(), FORMAT);
                 match RadioSource::new(config) {
                     Ok(mut radio) => {
-                        let _ = event_tx.blocking_send(Event::StateChanged {
+                        send_state(Event::StateChanged {
                             state: PlayState::Playing,
                             source: Some("radio".into()),
                             station_or_path: Some(station.name.clone()),
@@ -267,7 +284,7 @@ fn run_source_pipeline(
                         .first()
                         .map(|p| p.display().to_string())
                         .unwrap_or_default();
-                    let _ = event_tx.blocking_send(Event::StateChanged {
+                    send_state(Event::StateChanged {
                         state: PlayState::Playing,
                         source: Some("local".into()),
                         station_or_path: Some(display_path),
@@ -288,14 +305,12 @@ fn run_source_pipeline(
             },
             #[cfg(feature = "spotify")]
             SourceKind::Spotify(ref uri) => {
-                let cred_path = crate::sources::spotify::default_credentials_path()
-                    .unwrap_or_else(|| std::path::PathBuf::from("/tmp/clitunes-spotify-creds.json"));
-                let mut spotify = SpotifySource::new(
-                    uri.clone(),
-                    cred_path,
-                    event_tx.clone(),
-                );
-                let _ = event_tx.blocking_send(Event::StateChanged {
+                let cred_path =
+                    crate::sources::spotify::default_credentials_path().unwrap_or_else(|| {
+                        std::path::PathBuf::from("/tmp/clitunes-spotify-creds.json")
+                    });
+                let mut spotify = SpotifySource::new(uri.clone(), cred_path, event_tx.clone());
+                send_state(Event::StateChanged {
                     state: PlayState::Playing,
                     source: Some("spotify".into()),
                     station_or_path: Some(uri.clone()),
@@ -303,7 +318,7 @@ fn run_source_pipeline(
                     duration_secs: None,
                 });
                 spotify.run(&mut tee, &source_stop);
-            },
+            }
         }
 
         if stop.load(Ordering::Relaxed) {
@@ -338,6 +353,7 @@ async fn dispatch_verbs(
     event_tx: &mpsc::Sender<Event>,
     pcm_tap: &Event,
     stop: &Arc<AtomicBool>,
+    last_state: &Arc<Mutex<Option<Event>>>,
 ) {
     while let Some((envelope, reply_tx)) = verb_rx.recv().await {
         if stop.load(Ordering::Relaxed) {
@@ -349,9 +365,31 @@ async fn dispatch_verbs(
 
         match &envelope.verb {
             Verb::Play => {
+                tracing::info!(target: "clitunes_engine", "play: state → Playing");
+                let evt = {
+                    let mut guard = last_state.lock();
+                    if let Some(Event::StateChanged { state, .. }) = guard.as_mut() {
+                        *state = PlayState::Playing;
+                    }
+                    guard.clone()
+                };
+                if let Some(evt) = evt {
+                    let _ = event_tx.send(evt).await;
+                }
                 let _ = reply_tx.try_send(Event::command_ok(cmd_id));
             }
             Verb::Pause => {
+                tracing::info!(target: "clitunes_engine", "pause: state → Paused");
+                let evt = {
+                    let mut guard = last_state.lock();
+                    if let Some(Event::StateChanged { state, .. }) = guard.as_mut() {
+                        *state = PlayState::Paused;
+                    }
+                    guard.clone()
+                };
+                if let Some(evt) = evt {
+                    let _ = event_tx.send(evt).await;
+                }
                 let _ = reply_tx.try_send(Event::command_ok(cmd_id));
             }
             Verb::Source(SourceArg::Radio { uuid }) => {
@@ -392,6 +430,9 @@ async fn dispatch_verbs(
                 ));
             }
             Verb::Status => {
+                if let Some(state_event) = last_state.lock().clone() {
+                    let _ = reply_tx.try_send(state_event);
+                }
                 let _ = reply_tx.try_send(pcm_tap.clone());
                 let _ = reply_tx.try_send(Event::command_ok(cmd_id));
             }

@@ -299,6 +299,7 @@ fn persist_state_best_effort(uuid: &str, path: Option<&std::path::Path>) {
         last_source: Some(SOURCE_RADIO.to_string()),
         last_visualiser: None,
         last_layout: None,
+        last_spotify_uri: None,
     };
     if let Err(e) = save_state(&state, path) {
         tracing::warn!(target: "clitunes", error = %e, "save state failed");

@@ -17,6 +17,8 @@ use crate::proto::verbs::{SourceArg, Verb};
 #[cfg(feature = "local")]
 use crate::sources::local::LocalSource;
 use crate::sources::radio::{RadioConfig, RadioSource};
+#[cfg(feature = "spotify")]
+use crate::sources::spotify::SpotifySource;
 use crate::sources::tone_source::ToneSource;
 use crate::sources::Source;
 
@@ -174,6 +176,10 @@ enum SourceCommand {
     PlayLocal {
         paths: Vec<std::path::PathBuf>,
     },
+    #[cfg(feature = "spotify")]
+    PlaySpotify {
+        uri: String,
+    },
 }
 
 fn run_source_pipeline(
@@ -280,6 +286,24 @@ fn run_source_pipeline(
                     continue;
                 }
             },
+            #[cfg(feature = "spotify")]
+            SourceKind::Spotify(ref uri) => {
+                let cred_path = crate::sources::spotify::default_credentials_path()
+                    .unwrap_or_else(|| std::path::PathBuf::from("/tmp/clitunes-spotify-creds.json"));
+                let mut spotify = SpotifySource::new(
+                    uri.clone(),
+                    cred_path,
+                    event_tx.clone(),
+                );
+                let _ = event_tx.blocking_send(Event::StateChanged {
+                    state: PlayState::Playing,
+                    source: Some("spotify".into()),
+                    station_or_path: Some(uri.clone()),
+                    position_secs: None,
+                    duration_secs: None,
+                });
+                spotify.run(&mut tee, &source_stop);
+            },
         }
 
         if stop.load(Ordering::Relaxed) {
@@ -292,6 +316,8 @@ fn run_source_pipeline(
                 SourceCommand::PlayRadio { station } => current = SourceKind::Radio(station),
                 #[cfg(feature = "local")]
                 SourceCommand::PlayLocal { paths } => current = SourceKind::Local(paths),
+                #[cfg(feature = "spotify")]
+                SourceCommand::PlaySpotify { uri } => current = SourceKind::Spotify(uri),
             }
         }
     }
@@ -302,6 +328,8 @@ enum SourceKind {
     Radio(Station),
     #[cfg(feature = "local")]
     Local(Vec<std::path::PathBuf>),
+    #[cfg(feature = "spotify")]
+    Spotify(String),
 }
 
 async fn dispatch_verbs(
@@ -349,6 +377,18 @@ async fn dispatch_verbs(
                 let _ = reply_tx.try_send(Event::command_err(
                     cmd_id,
                     "local file playback not enabled in this build",
+                ));
+            }
+            #[cfg(feature = "spotify")]
+            Verb::Source(SourceArg::Spotify { uri }) => {
+                let _ = source_cmd_tx.send(SourceCommand::PlaySpotify { uri: uri.clone() });
+                let _ = reply_tx.try_send(Event::command_ok(cmd_id));
+            }
+            #[cfg(not(feature = "spotify"))]
+            Verb::Source(SourceArg::Spotify { .. }) => {
+                let _ = reply_tx.try_send(Event::command_err(
+                    cmd_id,
+                    "Spotify playback not enabled in this build",
                 ));
             }
             Verb::Status => {

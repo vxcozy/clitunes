@@ -31,6 +31,7 @@ pub enum Verb {
 pub enum SourceArg {
     Local { path: String },
     Radio { uuid: String },
+    Spotify { uri: String },
 }
 
 impl VerbEnvelope {
@@ -120,6 +121,20 @@ mod tests {
             },
         };
         let line = env.to_line();
+        let parsed = VerbEnvelope::from_line(&line).unwrap();
+        assert_eq!(parsed, env);
+    }
+
+    #[test]
+    fn source_spotify_roundtrip() {
+        let env = VerbEnvelope {
+            cmd_id: "sp-1".into(),
+            verb: Verb::Source(SourceArg::Spotify {
+                uri: "spotify:track:4PTG3Z6ehGkBFwjybzWkR8".into(),
+            }),
+        };
+        let line = env.to_line();
+        assert!(line.contains("spotify"));
         let parsed = VerbEnvelope::from_line(&line).unwrap();
         assert_eq!(parsed, env);
     }

@@ -44,6 +44,13 @@ spotify = [
     "dep:librespot-oauth",
     "dep:rubato",
 ]
+# Spotify Web API: search, library, playlists via rspotify. Daemon-safe
+# (no image/TUI deps). Requires `spotify` for shared auth infrastructure.
+webapi = ["spotify", "dep:rspotify"]
+# Album art decoding + CDN fetch. Client-only — daemon must NOT enable
+# this feature (D15). reqwest is already in the dep graph via `radio`;
+# the `image` crate is the new dependency.
+album-art = ["dep:image"]
 control = ["dep:tokio", "dep:tokio-util", "dep:futures-util"]
 # Daemon runtime: fork/detach, flock singleton, idle-exit timer, log rotation.
 # Gated so clitunesd picks it up (D15-safe: no wgpu/ratatui/crossterm) while the
@@ -96,6 +103,12 @@ librespot-playback = { workspace = true, optional = true }
 librespot-metadata = { workspace = true, optional = true }
 librespot-oauth = { workspace = true, optional = true }
 rubato = { workspace = true, optional = true }
+
+# Spotify Web API (v1.2 webapi feature).
+rspotify = { workspace = true, optional = true }
+
+# Album art decoding (v1.2 album-art feature). Client-only (D15).
+image = { workspace = true, optional = true }
 
 # Control bus (Unit 10). LinesCodec for line-delimited JSON framing.
 tokio-util = { workspace = true, optional = true }

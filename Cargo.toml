@@ -75,6 +75,15 @@ librespot-metadata = { version = "0.8", default-features = false, features = ["r
 librespot-oauth = { version = "0.8", default-features = false, features = ["rustls-tls-native-roots"] }
 rubato = "2"
 
+# Spotify Web API (v1.2). rspotify wraps the REST endpoints for search,
+# library, and playlist browsing. Default TLS disabled — we use rustls
+# to stay consistent with the rest of the workspace.
+rspotify = { version = "0.16", default-features = false, features = ["client-reqwest", "reqwest-rustls-tls"] }
+
+# Album art decoding (v1.2). The `image` crate decodes JPEG/PNG covers
+# fetched from Spotify's CDN. Client-only — daemon never touches images (D15).
+image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
+
 # Patch librespot crates to dev branch which fixes the vergen-gitcl build
 # conflict (vergen-lib 0.1.6 vs 9.1.0 trait mismatch in build script).
 # See: https://github.com/rustyhorde/vergen/issues/478

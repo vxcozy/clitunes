@@ -10,6 +10,8 @@ pub mod sink;
 pub use auth::{default_credentials_path, load_credentials, load_or_authenticate, AuthResult};
 #[cfg(feature = "webapi")]
 pub mod token;
+#[cfg(feature = "webapi")]
+pub mod webapi;
 
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};

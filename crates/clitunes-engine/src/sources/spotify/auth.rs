@@ -20,13 +20,13 @@ use tempfile::NamedTempFile;
 use tracing::{info, warn};
 
 /// Spotify's embedded PKCE client ID (same as spotifyd, ncspot, etc.).
-const SPOTIFY_CLIENT_ID: &str = "65b708073fc0480ea92a077233ca87bd";
+pub(crate) const SPOTIFY_CLIENT_ID: &str = "65b708073fc0480ea92a077233ca87bd";
 
 /// Redirect URI registered for the PKCE client. Must use this exact port.
-const SPOTIFY_REDIRECT_URI: &str = "http://127.0.0.1:8898/login";
+pub(crate) const SPOTIFY_REDIRECT_URI: &str = "http://127.0.0.1:8898/login";
 
 /// All scopes needed for playback + Web API (v1.2).
-const SPOTIFY_SCOPES: &[&str] = &[
+pub(crate) const SPOTIFY_SCOPES: &[&str] = &[
     "streaming",
     "user-library-read",
     "playlist-read-private",

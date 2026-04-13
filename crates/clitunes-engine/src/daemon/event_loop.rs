@@ -524,15 +524,163 @@ async fn dispatch_verbs(
             }
             Verb::Quit | Verb::Subscribe { .. } | Verb::Unsubscribe { .. } | Verb::Capabilities => {
             }
-            // Unit 5: verbs are defined in the protocol but dispatch lands in
-            // Unit 6 (webapi provider). Until then, reply with a clear error so
-            // clients can detect the capability gap instead of timing out.
+            #[cfg(feature = "webapi")]
+            Verb::Search { query, limit } => {
+                dispatch_search(query, *limit, cmd_id, event_tx, &reply_tx).await;
+            }
+            #[cfg(feature = "webapi")]
+            Verb::BrowseLibrary { category, limit } => {
+                dispatch_browse_library(*category, *limit, cmd_id, event_tx, &reply_tx).await;
+            }
+            #[cfg(feature = "webapi")]
+            Verb::BrowsePlaylist { id, limit } => {
+                dispatch_browse_playlist(id, *limit, cmd_id, event_tx, &reply_tx).await;
+            }
+            #[cfg(not(feature = "webapi"))]
             Verb::Search { .. } | Verb::BrowseLibrary { .. } | Verb::BrowsePlaylist { .. } => {
                 let _ = reply_tx.try_send(Event::command_err(
                     cmd_id,
                     "browse/search not enabled in this build",
                 ));
             }
+        }
+    }
+}
+
+/// Load the cached OAuth credentials from disk and build a fresh
+/// [`SpotifyWebApi`] client. Returns `Err` if the on-disk cache is
+/// missing or unreadable — the caller surfaces that as an auth error.
+///
+/// The filesystem read + token decode runs on a blocking pool so the
+/// dispatcher doesn't stall while the daemon is I/O bound.
+#[cfg(feature = "webapi")]
+async fn build_webapi() -> Result<crate::sources::spotify::webapi::SpotifyWebApi> {
+    use crate::sources::spotify::{self, token::SharedTokenProvider, webapi::SpotifyWebApi};
+    let cred_path = spotify::default_credentials_path()
+        .context("resolve spotify credentials path (set $HOME?)")?;
+    let cred_path_clone = cred_path.clone();
+    let auth_result =
+        tokio::task::spawn_blocking(move || spotify::load_credentials(&cred_path_clone))
+            .await
+            .context("credential task panicked")?
+            .context("load spotify credentials")?;
+    let provider = SharedTokenProvider::new(auth_result.token, cred_path);
+    Ok(SpotifyWebApi::from_provider(&provider))
+}
+
+/// Map any auth/webapi error to a `CommandResult { ok: false, .. }`.
+/// Keeps dispatch handlers terse.
+#[cfg(feature = "webapi")]
+fn webapi_err(cmd_id: &str, context: &str, err: anyhow::Error) -> Event {
+    tracing::warn!(
+        target: "clitunesd",
+        error = %err,
+        context,
+        "spotify webapi call failed"
+    );
+    Event::command_err(cmd_id, format!("{context}: {err}"))
+}
+
+#[cfg(feature = "webapi")]
+async fn dispatch_search(
+    query: &str,
+    limit: Option<u32>,
+    cmd_id: &str,
+    event_tx: &mpsc::Sender<Event>,
+    reply_tx: &mpsc::Sender<Event>,
+) {
+    let api = match build_webapi().await {
+        Ok(api) => api,
+        Err(e) => {
+            let _ = reply_tx.try_send(webapi_err(cmd_id, "spotify auth", e));
+            return;
+        }
+    };
+    match api.search(query, limit).await {
+        Ok((items, total)) => {
+            let _ = event_tx
+                .send(Event::SearchResults {
+                    query: query.to_string(),
+                    items,
+                    total,
+                })
+                .await;
+            let _ = reply_tx.try_send(Event::command_ok(cmd_id));
+        }
+        Err(e) => {
+            let _ = reply_tx.try_send(webapi_err(cmd_id, "spotify search", e));
+        }
+    }
+}
+
+#[cfg(feature = "webapi")]
+async fn dispatch_browse_library(
+    category: clitunes_core::LibraryCategory,
+    limit: Option<u32>,
+    cmd_id: &str,
+    event_tx: &mpsc::Sender<Event>,
+    reply_tx: &mpsc::Sender<Event>,
+) {
+    use clitunes_core::LibraryCategory;
+    let api = match build_webapi().await {
+        Ok(api) => api,
+        Err(e) => {
+            let _ = reply_tx.try_send(webapi_err(cmd_id, "spotify auth", e));
+            return;
+        }
+    };
+    let result = match category {
+        LibraryCategory::SavedTracks => api.saved_tracks(limit).await,
+        LibraryCategory::SavedAlbums => api.saved_albums(limit).await,
+        LibraryCategory::Playlists => api.playlists(limit).await,
+        LibraryCategory::RecentlyPlayed => api.recently_played(limit).await,
+    };
+    match result {
+        Ok((items, total)) => {
+            let _ = event_tx
+                .send(Event::LibraryResults {
+                    category,
+                    items,
+                    total,
+                })
+                .await;
+            let _ = reply_tx.try_send(Event::command_ok(cmd_id));
+        }
+        Err(e) => {
+            let _ = reply_tx.try_send(webapi_err(cmd_id, "spotify library", e));
+        }
+    }
+}
+
+#[cfg(feature = "webapi")]
+async fn dispatch_browse_playlist(
+    id: &str,
+    limit: Option<u32>,
+    cmd_id: &str,
+    event_tx: &mpsc::Sender<Event>,
+    reply_tx: &mpsc::Sender<Event>,
+) {
+    let api = match build_webapi().await {
+        Ok(api) => api,
+        Err(e) => {
+            let _ = reply_tx.try_send(webapi_err(cmd_id, "spotify auth", e));
+            return;
+        }
+    };
+    match api.playlist_tracks(id, limit).await {
+        Ok((name, items, total)) => {
+            let _ = event_tx
+                .send(Event::PlaylistResults {
+                    playlist_id: id.to_string(),
+                    playlist_name: Some(name),
+                    items,
+                    total,
+                })
+                .await;
+            let _ = reply_tx.try_send(Event::command_ok(cmd_id));
+        }
+        Err(e) => {
+            let _ = reply_tx.try_send(webapi_err(cmd_id, "spotify playlist", e));
         }
     }
 }

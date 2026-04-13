@@ -13,6 +13,7 @@
 //! - `clitunes source local <path>`    → headless source switch
 //! - `clitunes status [--json]`        → one-shot status query
 
+use std::io::IsTerminal;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -41,7 +42,16 @@ fn main() -> Result<()> {
         return Ok(());
     }
 
-    observability::init_tracing("clitunes")?;
+    // TUI modes must log to a file — stderr shares the terminal and
+    // would corrupt the visualiser output. When stdout is not a terminal
+    // (CI / piped), stderr is safe because there's no terminal to corrupt.
+    let tui_mode = matches!(mode, CliMode::FullTui(_) | CliMode::Pane { .. });
+    if tui_mode && std::io::stdout().is_terminal() {
+        let log_path = std::env::temp_dir().join("clitunes-tui.log");
+        observability::init_tracing_to_file("clitunes", &log_path)?;
+    } else {
+        observability::init_tracing("clitunes")?;
+    }
 
     let app_stop = Arc::new(AtomicBool::new(false));
     install_signal_handler(Arc::clone(&app_stop))?;
@@ -215,30 +225,41 @@ async fn run_full_tui(
     let bridge_stop = Arc::clone(&stop);
     let bridge_state_path = state_path.clone();
     tokio::spawn(async move {
+        tracing::debug!(target: "clitunes", "bridge task started");
         loop {
             tokio::select! {
                 event = session.recv_event() => {
                     match event {
                         Some(ev) => {
                             if event_tx.send(ev).is_err() {
+                                tracing::warn!(target: "clitunes", "bridge: event_tx closed");
                                 break;
                             }
                         }
-                        None => break,
+                        None => {
+                            tracing::warn!(target: "clitunes", "bridge: session returned None (daemon disconnected)");
+                            break;
+                        }
                     }
                 }
                 verb = verb_rx.recv() => {
                     match verb {
                         Some(v) => {
+                            tracing::info!(target: "clitunes", verb = ?v, "bridge: forwarding verb to daemon");
                             if let Verb::Source(SourceArg::Radio { ref uuid }) = v {
                                 persist_state_best_effort(
                                     uuid,
                                     bridge_state_path.as_deref(),
                                 );
                             }
-                            let _ = session.send_verb(v).await;
+                            if let Err(e) = session.send_verb(v).await {
+                                tracing::error!(target: "clitunes", error = %e, "bridge: send_verb failed");
+                            }
                         }
-                        None => break,
+                        None => {
+                            tracing::info!(target: "clitunes", "bridge: verb_rx closed");
+                            break;
+                        }
                     }
                 }
             }
@@ -246,6 +267,7 @@ async fn run_full_tui(
                 break;
             }
         }
+        tracing::info!(target: "clitunes", "bridge task exited");
     });
 
     if let Some(ref s) = startup {

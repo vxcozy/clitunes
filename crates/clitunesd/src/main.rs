@@ -138,6 +138,7 @@ fn init_tracing(log_path: &Path, foreground: bool) -> Result<()> {
             .try_init()
             .map_err(|e| anyhow::anyhow!("tracing init: {e}"))?;
     }
+    tracing::info!(component = "clitunesd", "tracing initialised");
     Ok(())
 }
 

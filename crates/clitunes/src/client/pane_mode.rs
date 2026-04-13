@@ -17,8 +17,8 @@ use clitunes_engine::audio::FftTap;
 use clitunes_engine::pcm::cross_process_api::PcmConsumer;
 use clitunes_engine::proto::events::Event;
 use clitunes_engine::visualiser::{
-    AnsiWriter, Auralis, Cascade, CellGrid, Metaballs, Plasma, Ripples, Starfield, Tideline,
-    TuiContext, Tunnel, Visualiser,
+    AnsiWriter, CellGrid, Fire, Matrix, Metaballs, Moire, Plasma, Ripples, TuiContext, Tunnel,
+    Visualiser, Vortex,
 };
 
 const FFT_SIZE: usize = 2048;
@@ -57,9 +57,7 @@ pub fn run_pane(config: PaneModeConfig) -> Result<()> {
 // ─── visualiser pane ───────────────────────────────────────────────
 
 fn run_visualiser_pane(config: PaneModeConfig) -> Result<()> {
-    let (cols, rows) = terminal_size().unwrap_or((80, 24));
-    let cols = cols.saturating_sub(1).max(20);
-    let rows = rows.saturating_sub(1).max(10);
+    let (mut cols, mut rows) = pane_cell_rect();
     let mut grid = CellGrid::new(cols, rows);
 
     let mut visualisers: Vec<Box<dyn Visualiser>> = vec![
@@ -67,10 +65,10 @@ fn run_visualiser_pane(config: PaneModeConfig) -> Result<()> {
         Box::new(Ripples::new()),
         Box::new(Tunnel::new()),
         Box::new(Metaballs::new()),
-        Box::new(Starfield::new()),
-        Box::new(Auralis::new()),
-        Box::new(Tideline::new()),
-        Box::new(Cascade::new()),
+        Box::new(Vortex::new()),
+        Box::new(Fire::new()),
+        Box::new(Matrix::new()),
+        Box::new(Moire::new()),
     ];
 
     let mut active_idx: usize = if let Some(ref name) = config.viz_name {
@@ -129,6 +127,15 @@ fn run_visualiser_pane(config: PaneModeConfig) -> Result<()> {
                 }
                 _ => {}
             }
+        }
+
+        // Check for terminal resize.
+        let (new_w, new_h) = pane_cell_rect();
+        if new_w != cols || new_h != rows {
+            cols = new_w;
+            rows = new_h;
+            grid = CellGrid::new(cols, rows);
+            let _ = writer.clear_screen();
         }
 
         let n = consumer.read_frames(&mut pcm_buf).unwrap_or(0);
@@ -435,6 +442,11 @@ fn spawn_raw_key_thread(stop: Arc<AtomicBool>, tx: std::sync::mpsc::Sender<u8>) 
             }
         })
         .expect("spawn pane key thread");
+}
+
+fn pane_cell_rect() -> (u16, u16) {
+    let (c, r) = terminal_size().unwrap_or((80, 24));
+    (c.saturating_sub(1).max(20), r.saturating_sub(1).max(10))
 }
 
 fn terminal_size() -> Option<(u16, u16)> {

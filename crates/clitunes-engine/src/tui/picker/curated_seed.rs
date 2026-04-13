@@ -196,21 +196,104 @@ pub fn baked_list() -> CuratedList {
         "discovery",
     ];
 
-    let stations = (0..CURATED_SLOT_COUNT)
-        .map(|i| CuratedStation {
-            slot: i as u8,
-            name: format!("[unset slot {}]", i + 1),
-            genre: SLOT_LABELS[i].to_string(),
-            country: "—".to_string(),
-            url: format!("placeholder://slot/{i}"),
-            rationale: format!(
-                "Placeholder for the {} slot. Fill during Slice 2 polish; \
-                 see docs/curation/2026-04-11-curated-stations.md for the \
-                 engineer-taste audit.",
-                SLOT_LABELS[i]
-            ),
-        })
-        .collect();
+    let stations = vec![
+        CuratedStation {
+            slot: 0,
+            name: "SomaFM Groove Salad".into(),
+            genre: SLOT_LABELS[0].into(),
+            country: "US".into(),
+            url: "radiobrowser:960cf833-0601-11e8-ae97-52543be04c81".into(),
+            rationale: "Top ambient/chillout stream; reliable uptime".into(),
+        },
+        CuratedStation {
+            slot: 1,
+            name: "Classic FM".into(),
+            genre: SLOT_LABELS[1].into(),
+            country: "UK".into(),
+            url: "radiobrowser:96063f25-0601-11e8-ae97-52543be04c81".into(),
+            rationale: "High-traffic classical station with ICY metadata".into(),
+        },
+        CuratedStation {
+            slot: 2,
+            name: "101 Smooth Jazz".into(),
+            genre: SLOT_LABELS[2].into(),
+            country: "US".into(),
+            url: "radiobrowser:d28420a4-eccf-47a2-ace1-088c7e7cb7e0".into(),
+            rationale: "Popular jazz stream with track metadata".into(),
+        },
+        CuratedStation {
+            slot: 3,
+            name: "Dance Wave!".into(),
+            genre: SLOT_LABELS[3].into(),
+            country: "HU".into(),
+            url: "radiobrowser:962cc6df-0601-11e8-ae97-52543be04c81".into(),
+            rationale: "High-energy electronic/dance; good for visualiser demos".into(),
+        },
+        CuratedStation {
+            slot: 4,
+            name: "SomaFM Indie Pop Rocks!".into(),
+            genre: SLOT_LABELS[4].into(),
+            country: "US".into(),
+            url: "radiobrowser:96394224-0601-11e8-ae97-52543be04c81".into(),
+            rationale: "SomaFM indie stream; reliable ICY metadata".into(),
+        },
+        CuratedStation {
+            slot: 5,
+            name: "Radio Nova".into(),
+            genre: SLOT_LABELS[5].into(),
+            country: "FR".into(),
+            url: "radiobrowser:963fb390-0601-11e8-ae97-52543be04c81".into(),
+            rationale: "Eclectic world/pop from Paris; broad genre coverage".into(),
+        },
+        CuratedStation {
+            slot: 6,
+            name: "NPR Program Stream".into(),
+            genre: SLOT_LABELS[6].into(),
+            country: "US".into(),
+            url: "radiobrowser:7ba4c184-fc2b-11e9-bbf2-52543be04c81".into(),
+            rationale: "24-hour NPR news/talk; standard public radio pick".into(),
+        },
+        CuratedStation {
+            slot: 7,
+            name: "RdMix Classic Rock".into(),
+            genre: SLOT_LABELS[7].into(),
+            country: "CA".into(),
+            url: "radiobrowser:7afae7e3-8d06-42f5-b59e-a52d6e09e60e".into(),
+            rationale: "High-click classic rock stream spanning 60s-90s".into(),
+        },
+        CuratedStation {
+            slot: 8,
+            name: "Jazz Radio".into(),
+            genre: SLOT_LABELS[8].into(),
+            country: "FR".into(),
+            url: "radiobrowser:96136fe5-0601-11e8-ae97-52543be04c81".into(),
+            rationale: "French jazz/soul station with reliable stream".into(),
+        },
+        CuratedStation {
+            slot: 9,
+            name: "100 Hip Hop and RNB".into(),
+            genre: SLOT_LABELS[9].into(),
+            country: "US".into(),
+            url: "radiobrowser:dba1b7bc-6b92-409c-a543-8b42eec25636".into(),
+            rationale: "Dedicated hip-hop/R&B stream".into(),
+        },
+        CuratedStation {
+            slot: 10,
+            name: "BBC Radio 6 Music".into(),
+            genre: SLOT_LABELS[10].into(),
+            country: "UK".into(),
+            url: "radiobrowser:1c6dcd6f-88c6-4fd4-8191-078435168e85".into(),
+            rationale: "BBC eclectic/experimental; broadest genre range".into(),
+        },
+        CuratedStation {
+            slot: 11,
+            name: "Chillofi Radio".into(),
+            genre: SLOT_LABELS[11].into(),
+            country: "FR".into(),
+            url: "radiobrowser:9afb0f28-5ff1-4547-8eb7-7edc0e48e1d0".into(),
+            rationale: "Lo-fi/chillhop discovery station".into(),
+        },
+    ];
 
     CuratedList {
         stations,

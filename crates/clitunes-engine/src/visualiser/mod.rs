@@ -25,25 +25,33 @@ pub mod auralis;
 pub mod cascade;
 pub mod cell_grid;
 pub mod density_ramp;
+pub mod fire;
+pub mod matrix;
 pub mod metaballs;
+pub mod moire;
 pub mod palette;
 pub mod plasma;
 pub mod ripples;
 pub mod starfield;
 pub mod tideline;
 pub mod tunnel;
+pub mod vortex;
 
 pub use ansi_writer::AnsiWriter;
 pub use auralis::Auralis;
 pub use cascade::Cascade;
 pub use cell_grid::{Cell, CellGrid, Rgb};
 pub use density_ramp::DensityRamp;
+pub use fire::Fire;
+pub use matrix::Matrix;
 pub use metaballs::Metaballs;
+pub use moire::Moire;
 pub use plasma::Plasma;
 pub use ripples::Ripples;
 pub use starfield::Starfield;
 pub use tideline::Tideline;
 pub use tunnel::Tunnel;
+pub use vortex::Vortex;
 
 /// Context passed to a visualiser each frame. The visualiser paints into
 /// the mutable `grid`; the main loop's ANSI writer emits it afterwards.

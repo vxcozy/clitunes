@@ -16,7 +16,32 @@
 //! for. That keeps this module testable without any threads, channels,
 //! or I/O.
 
+use std::time::Instant;
+
 use crate::tui::picker::curated_seed::CuratedList;
+
+/// Maximum time between keypresses to count as "rapid" for momentum
+/// (150 ms). Tuned so that holding an arrow key at typical repeat
+/// rates (~80–100 ms) always counts as rapid, while deliberate
+/// pauses between individual presses (~200+ ms) always reset.
+const MOMENTUM_THRESHOLD_MS: u128 = 150;
+/// Rapid-press count before accelerating to speed 2 (move 2 items
+/// per keypress). Five presses is roughly 0.5 s of held key.
+const ACCEL_TIER_1: usize = 5;
+/// Rapid-press count before accelerating to speed 3 (move 3 items
+/// per keypress). Ten presses is roughly 1 s of held key.
+const ACCEL_TIER_2: usize = 10;
+
+/// Map a rapid-press count to a scroll speed (1, 2, or 3).
+fn speed_for_count(count: usize) -> usize {
+    if count >= ACCEL_TIER_2 {
+        3
+    } else if count >= ACCEL_TIER_1 {
+        2
+    } else {
+        1
+    }
+}
 
 /// Result of handling a single key press.
 #[derive(Debug, PartialEq, Eq)]
@@ -46,6 +71,10 @@ pub struct PickerState {
     /// has gone missing (from the "state.toml references a station
     /// that no longer exists" edge case). `None` for the happy path.
     pub banner: Option<String>,
+    /// Momentum scrolling: count of rapid consecutive direction presses.
+    rapid_count: usize,
+    /// Timestamp of the last direction keypress.
+    last_nav_at: Option<Instant>,
 }
 
 impl PickerState {
@@ -56,6 +85,8 @@ impl PickerState {
             selected: initial_selection.min(total.saturating_sub(1)),
             total,
             banner: None,
+            rapid_count: 0,
+            last_nav_at: None,
         }
     }
 
@@ -68,21 +99,58 @@ impl PickerState {
     }
 
     pub fn move_up(&mut self) {
-        if self.total == 0 {
-            return;
-        }
-        if self.selected == 0 {
-            self.selected = self.total - 1; // wrap to bottom
-        } else {
-            self.selected -= 1;
-        }
+        self.move_up_at(Instant::now());
     }
 
     pub fn move_down(&mut self) {
+        self.move_down_at(Instant::now());
+    }
+
+    fn move_up_at(&mut self, now: Instant) {
         if self.total == 0 {
             return;
         }
-        self.selected = (self.selected + 1) % self.total;
+        let steps = self.update_momentum(now);
+        for _ in 0..steps {
+            if self.selected == 0 {
+                self.selected = self.total - 1;
+            } else {
+                self.selected -= 1;
+            }
+        }
+    }
+
+    fn move_down_at(&mut self, now: Instant) {
+        if self.total == 0 {
+            return;
+        }
+        let steps = self.update_momentum(now);
+        for _ in 0..steps {
+            self.selected = (self.selected + 1) % self.total;
+        }
+    }
+
+    /// Track rapid keypresses and return the number of items to move.
+    fn update_momentum(&mut self, now: Instant) -> usize {
+        let is_rapid = self
+            .last_nav_at
+            .map(|prev| now.duration_since(prev).as_millis() < MOMENTUM_THRESHOLD_MS)
+            .unwrap_or(false);
+
+        if is_rapid {
+            self.rapid_count += 1;
+        } else {
+            self.rapid_count = 1;
+        }
+        self.last_nav_at = Some(now);
+
+        speed_for_count(self.rapid_count)
+    }
+
+    /// Current momentum scroll speed (1, 2, or 3). For testing.
+    #[cfg(test)]
+    fn scroll_speed(&self) -> usize {
+        speed_for_count(self.rapid_count)
     }
 
     /// Handle a key byte from the raw-stdin reader. Arrow keys are
@@ -91,6 +159,10 @@ impl PickerState {
     /// [`PickerKey::Up`] / [`PickerKey::Down`] before calling us —
     /// see the `key_from_bytes` helper for mapping.
     pub fn handle_key(&mut self, key: PickerKey) -> PickerAction {
+        self.handle_key_at(key, Instant::now())
+    }
+
+    fn handle_key_at(&mut self, key: PickerKey, now: Instant) -> PickerAction {
         if !self.visible {
             // Only `s` reopens the picker when hidden.
             return if matches!(key, PickerKey::ToggleVisibility) {
@@ -102,11 +174,11 @@ impl PickerState {
         }
         match key {
             PickerKey::Up => {
-                self.move_up();
+                self.move_up_at(now);
                 PickerAction::Moved
             }
             PickerKey::Down => {
-                self.move_down();
+                self.move_down_at(now);
                 PickerAction::Moved
             }
             PickerKey::Enter => {
@@ -165,6 +237,7 @@ pub fn key_from_bytes(buf: &[u8]) -> PickerKey {
 mod tests {
     use super::*;
     use crate::tui::picker::curated_seed::baked_list;
+    use std::time::Duration;
 
     #[test]
     fn new_clamps_initial_selection() {
@@ -263,5 +336,62 @@ mod tests {
     fn key_from_bytes_unknown_is_other() {
         assert_eq!(key_from_bytes(b"z"), PickerKey::Other);
         assert_eq!(key_from_bytes(b""), PickerKey::Other);
+    }
+
+    #[test]
+    fn momentum_accelerates_after_5_rapid_presses() {
+        let list = baked_list();
+        let mut st = PickerState::new(&list, 0);
+        let start = Instant::now();
+        // Simulate 5 rapid keypresses at 100ms intervals.
+        for i in 0..5 {
+            let t = start + Duration::from_millis(i as u64 * 100);
+            st.handle_key_at(PickerKey::Down, t);
+        }
+        assert_eq!(st.scroll_speed(), 2);
+    }
+
+    #[test]
+    fn momentum_accelerates_after_10_rapid_presses() {
+        let list = baked_list();
+        let mut st = PickerState::new(&list, 0);
+        let start = Instant::now();
+        for i in 0..10 {
+            let t = start + Duration::from_millis(i as u64 * 100);
+            st.handle_key_at(PickerKey::Down, t);
+        }
+        assert_eq!(st.scroll_speed(), 3);
+    }
+
+    #[test]
+    fn momentum_resets_on_pause() {
+        let list = baked_list();
+        let mut st = PickerState::new(&list, 0);
+        let start = Instant::now();
+        // 5 rapid presses → speed 2.
+        for i in 0..5 {
+            let t = start + Duration::from_millis(i as u64 * 100);
+            st.handle_key_at(PickerKey::Down, t);
+        }
+        assert_eq!(st.scroll_speed(), 2);
+        // Pause 200ms then press again → speed resets to 1.
+        let pause_t = start + Duration::from_millis(5 * 100 + 200);
+        st.handle_key_at(PickerKey::Down, pause_t);
+        assert_eq!(st.scroll_speed(), 1);
+    }
+
+    #[test]
+    fn momentum_moves_multiple_items() {
+        let list = baked_list();
+        let mut st = PickerState::new(&list, 0);
+        let start = Instant::now();
+        // 5 rapid presses to reach speed 2.
+        for i in 0..5 {
+            let t = start + Duration::from_millis(i as u64 * 100);
+            st.move_down_at(t);
+        }
+        // After 5 presses at speed 1 then last at speed 2:
+        // Press 1-4: move 1 each = 4. Press 5: speed becomes 2, move 2 = 6 total.
+        assert_eq!(st.selected, 6);
     }
 }

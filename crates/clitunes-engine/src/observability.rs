@@ -9,6 +9,8 @@
 //! values into message strings; never log PII (lyrics, full local file paths,
 //! user IP addresses).
 
+use std::path::Path;
+
 use tracing_subscriber::prelude::*;
 use tracing_subscriber::{fmt, EnvFilter};
 
@@ -81,6 +83,38 @@ pub fn init_tracing(component: &str) -> anyhow::Result<()> {
             .try_init()
             .map_err(|e| anyhow::anyhow!("tracing init: {e}"))?;
     }
+
+    tracing::info!(component = component, "tracing initialised");
+    Ok(())
+}
+
+/// Like [`init_tracing`] but writes to a file instead of stderr.
+/// Essential for TUI binaries where stderr shares the terminal and
+/// would contaminate the visualiser output.
+pub fn init_tracing_to_file(component: &str, log_path: &Path) -> anyhow::Result<()> {
+    let default_filter = format!("clitunes=info,clitunes_engine=info,{component}=info,warn");
+    let filter =
+        EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(default_filter));
+
+    if let Some(parent) = log_path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(log_path)
+        .map_err(|e| anyhow::anyhow!("open log file {}: {e}", log_path.display()))?;
+
+    tracing_subscriber::registry()
+        .with(filter)
+        .with(
+            fmt::layer()
+                .with_target(true)
+                .with_ansi(false)
+                .with_writer(std::sync::Mutex::new(file)),
+        )
+        .try_init()
+        .map_err(|e| anyhow::anyhow!("tracing init: {e}"))?;
 
     tracing::info!(component = component, "tracing initialised");
     Ok(())

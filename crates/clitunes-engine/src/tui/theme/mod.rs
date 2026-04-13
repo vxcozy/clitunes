@@ -12,8 +12,12 @@ pub use tokens::Token;
 
 use crate::visualiser::cell_grid::Rgb;
 
-/// Number of semantic tokens. Must stay in sync with [`Token`] variants.
-const TOKEN_COUNT: usize = 14;
+/// Number of semantic tokens, derived from the last variant's index.
+/// Adding a `Token` variant forces updating `token_index()` (exhaustive
+/// match), and if the new variant's index exceeds `Success`, updating
+/// this line — otherwise the array is too small and tests fail at compile
+/// time via the const assertion below.
+const TOKEN_COUNT: usize = token_index(Token::Success) + 1;
 
 /// A resolved colour theme — one RGB value per semantic token.
 ///

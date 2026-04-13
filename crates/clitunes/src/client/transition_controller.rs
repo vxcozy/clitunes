@@ -15,8 +15,15 @@ pub struct ActiveTransition {
     pub source_grid: CellGrid,
 }
 
-/// Brightness multiplier for paused state (60%).
+/// Brightness multiplier for paused state. 60% is dim enough to
+/// clearly signal "paused" while keeping the visualiser artwork
+/// readable (matches `breathing::CENTER`).
 const PAUSE_BRIGHTNESS: f32 = 0.6;
+
+/// Deterministic seed for dissolve noise masks. Chosen arbitrarily;
+/// the exact value doesn't matter as long as it's consistent so the
+/// dissolve pattern is reproducible across runs.
+const DISSOLVE_SEED: u64 = 0xCAFE;
 
 /// Controller that manages visual transitions for state changes.
 #[derive(Default)]
@@ -52,17 +59,15 @@ impl TransitionController {
 
     /// Start a source-switch dissolve (12 frames, ease_out_cubic).
     pub fn start_source_switch(&mut self, current_grid: &CellGrid) {
-        let mut source = CellGrid::new(current_grid.width(), current_grid.height());
-        source.copy_from(current_grid);
         self.active = Some(ActiveTransition {
             transition: Transition::dissolve(
                 easing::ease_out_cubic,
                 12,
                 current_grid.width(),
                 current_grid.height(),
-                0xCAFE,
+                DISSOLVE_SEED,
             ),
-            source_grid: source,
+            source_grid: current_grid.snapshot(),
         });
     }
 
@@ -70,8 +75,6 @@ impl TransitionController {
     /// `forward` = true for next (wipe left), false for prev (wipe right).
     pub fn start_viz_switch(&mut self, current_grid: &CellGrid, forward: bool) {
         use clitunes_engine::tui::transition::blend::WipeDirection;
-        let mut source = CellGrid::new(current_grid.width(), current_grid.height());
-        source.copy_from(current_grid);
         let dir = if forward {
             WipeDirection::LeftToRight
         } else {
@@ -79,7 +82,7 @@ impl TransitionController {
         };
         self.active = Some(ActiveTransition {
             transition: Transition::new(TransitionMode::Wipe(dir), easing::ease_in_out_cubic, 10),
-            source_grid: source,
+            source_grid: current_grid.snapshot(),
         });
     }
 
@@ -90,12 +93,9 @@ impl TransitionController {
             return false;
         }
         self.paused = paused;
-        // Start a 6-frame fade for the brightness transition.
-        let mut source = CellGrid::new(current_grid.width(), current_grid.height());
-        source.copy_from(current_grid);
         self.active = Some(ActiveTransition {
             transition: Transition::new(TransitionMode::Fade, easing::ease_out_cubic, 6),
-            source_grid: source,
+            source_grid: current_grid.snapshot(),
         });
         true
     }

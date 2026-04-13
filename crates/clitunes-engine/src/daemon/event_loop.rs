@@ -25,9 +25,7 @@ use crate::sources::Source;
 use super::tee_writer::TeeWriter;
 use super::IdleTimer;
 
-const RING_FRAMES: usize = 48_000;
 const TONE_BLOCK: usize = 1024;
-const FORMAT: PcmFormat = PcmFormat::STUDIO;
 
 pub struct DaemonEventLoop {
     socket_path: std::path::PathBuf,
@@ -73,8 +71,20 @@ impl DaemonEventLoop {
 
         let event_tx = server.event_sender();
 
+        // Probe the audio device's native rate so the entire pipeline
+        // (ring, decoder, SPMC) runs at that rate. This eliminates the
+        // double-resampling artefacts that occur when the ring is at
+        // 48 kHz but the device negotiates 44.1 kHz.
+        let cpal_cfg = CpalOutputConfig::default();
+        let device_rate = CpalOutput::probe_device_rate(&cpal_cfg);
+        let format = PcmFormat {
+            sample_rate: device_rate,
+            channels: 2,
+        };
+        let ring_frames = device_rate as usize; // ~1 second buffer
+
         let (region, spmc_producer) =
-            <ShmRegion as PcmBridge>::create(DEFAULT_CAPACITY, FORMAT.sample_rate)
+            <ShmRegion as PcmBridge>::create(DEFAULT_CAPACITY, format.sample_rate)
                 .context("create SPMC PCM ring")?;
         let shm_name = region.shm_name().to_owned();
         tracing::info!(
@@ -84,10 +94,10 @@ impl DaemonEventLoop {
             "SPMC PCM ring created"
         );
 
-        let ring = PcmRing::new(FORMAT, RING_FRAMES);
+        let ring = PcmRing::new(format, ring_frames);
         let tee = TeeWriter::new(ring.writer(), Box::new(spmc_producer));
 
-        let _audio_out = match CpalOutput::start(ring.reader(), CpalOutputConfig::default()) {
+        let _audio_out = match CpalOutput::start(ring.reader(), cpal_cfg, device_rate) {
             Ok(out) => {
                 let neg = out.negotiated();
                 tracing::info!(
@@ -111,7 +121,7 @@ impl DaemonEventLoop {
 
         let pcm_tap_event = Event::PcmTap {
             shm_name: shm_name.clone(),
-            sample_rate: FORMAT.sample_rate,
+            sample_rate: format.sample_rate,
             channels: 2,
             capacity: DEFAULT_CAPACITY,
         };
@@ -132,6 +142,7 @@ impl DaemonEventLoop {
                     source_stop,
                     source_event_tx,
                     source_last_state,
+                    format,
                 );
             })
             .context("spawn source pipeline")?;
@@ -204,6 +215,7 @@ fn run_source_pipeline(
     stop: Arc<AtomicBool>,
     event_tx: mpsc::Sender<Event>,
     last_state: Arc<Mutex<Option<Event>>>,
+    format: PcmFormat,
 ) {
     let pending: Arc<Mutex<Option<SourceCommand>>> = Arc::new(Mutex::new(None));
     let source_stop = Arc::new(AtomicBool::new(false));
@@ -232,7 +244,7 @@ fn run_source_pipeline(
         })
         .expect("spawn cmd watcher");
 
-    let mut current = SourceKind::Tone;
+    let mut current = SourceKind::Idle;
 
     loop {
         if stop.load(Ordering::Relaxed) {
@@ -247,6 +259,15 @@ fn run_source_pipeline(
         };
 
         match &current {
+            SourceKind::Idle => {
+                // No source — wait for a command without generating audio.
+                loop {
+                    if stop.load(Ordering::Relaxed) || source_stop.load(Ordering::Relaxed) {
+                        break;
+                    }
+                    std::thread::sleep(Duration::from_millis(50));
+                }
+            }
             SourceKind::Tone => {
                 send_state(Event::StateChanged {
                     state: PlayState::Playing,
@@ -255,11 +276,11 @@ fn run_source_pipeline(
                     position_secs: None,
                     duration_secs: None,
                 });
-                let mut tone = ToneSource::new(FORMAT, TONE_BLOCK);
+                let mut tone = ToneSource::new(format, TONE_BLOCK);
                 tone.run(&mut tee, &source_stop);
             }
             SourceKind::Radio(station) => {
-                let config = RadioConfig::new(station.clone(), FORMAT);
+                let config = RadioConfig::new(station.clone(), format);
                 match RadioSource::new(config) {
                     Ok(mut radio) => {
                         send_state(Event::StateChanged {
@@ -283,7 +304,7 @@ fn run_source_pipeline(
                 }
             }
             #[cfg(feature = "local")]
-            SourceKind::Local(paths) => match LocalSource::new(paths.clone(), FORMAT.sample_rate) {
+            SourceKind::Local(paths) => match LocalSource::new(paths.clone(), format.sample_rate) {
                 Ok(mut local) => {
                     let display_path = paths
                         .first()
@@ -344,6 +365,8 @@ fn run_source_pipeline(
 }
 
 enum SourceKind {
+    /// No source selected — write silence until a source command arrives.
+    Idle,
     Tone,
     Radio(Station),
     #[cfg(feature = "local")]
@@ -398,12 +421,24 @@ async fn dispatch_verbs(
                 let _ = reply_tx.try_send(Event::command_ok(cmd_id));
             }
             Verb::Source(SourceArg::Radio { uuid }) => {
-                match crate::sources::radio::resolve_station_blocking(uuid) {
+                match crate::sources::radio::resolve_station(uuid).await {
                     Ok(station) => {
+                        tracing::info!(
+                            target: "clitunesd",
+                            station = %station.name,
+                            url = %station.url_resolved,
+                            "resolved radio station"
+                        );
                         let _ = source_cmd_tx.send(SourceCommand::PlayRadio { station });
                         let _ = reply_tx.try_send(Event::command_ok(cmd_id));
                     }
                     Err(e) => {
+                        tracing::error!(
+                            target: "clitunesd",
+                            error = %e,
+                            %uuid,
+                            "failed to resolve radio station"
+                        );
                         let _ = reply_tx
                             .try_send(Event::command_err(cmd_id, format!("resolve station: {e}")));
                     }

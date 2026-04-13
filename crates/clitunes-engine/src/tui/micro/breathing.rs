@@ -11,11 +11,15 @@ pub struct BreathingAnimation {
     active: bool,
 }
 
-/// Full sine cycle in frames (4 seconds at 30fps).
+/// Full sine cycle in frames (120 frames = 4 s at 30 fps). Matches a
+/// relaxed human breathing cadence — slow enough to feel organic, fast
+/// enough to notice the visualiser is still alive.
 const CYCLE_FRAMES: f32 = 120.0;
-/// Center brightness.
+/// Center brightness (60 %). Dim enough to clearly signal "paused",
+/// bright enough that the visualiser artwork stays readable.
 const CENTER: f32 = 0.60;
-/// Amplitude (±5%).
+/// Amplitude of the sine oscillation (±5 %). Just enough motion to
+/// avoid looking frozen without being distracting.
 const AMPLITUDE: f32 = 0.05;
 
 impl BreathingAnimation {

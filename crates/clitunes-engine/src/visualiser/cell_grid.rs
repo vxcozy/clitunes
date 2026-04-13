@@ -124,6 +124,15 @@ impl CellGrid {
         let len = self.cells.len().min(other.cells.len());
         self.cells[..len].copy_from_slice(&other.cells[..len]);
     }
+
+    /// Create a new grid with identical dimensions and cell contents.
+    pub fn snapshot(&self) -> CellGrid {
+        CellGrid {
+            width: self.width,
+            height: self.height,
+            cells: self.cells.clone(),
+        }
+    }
 }
 
 #[cfg(test)]

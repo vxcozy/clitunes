@@ -6,8 +6,9 @@
 //!   Track Title — Album Name                 [foreground, album in foreground-dim]
 //! ```
 
+use crate::tui::text::{truncate_str, write_str};
 use crate::tui::theme::{Theme, Token};
-use crate::visualiser::cell_grid::{Cell, CellGrid, Rgb};
+use crate::visualiser::cell_grid::{Cell, CellGrid};
 
 /// Current track metadata. Fed by NowPlayingChanged events.
 #[derive(Clone, Debug, Default)]
@@ -78,30 +79,6 @@ pub fn render_now_playing(
     }
 }
 
-fn truncate_str(s: &str, max: usize) -> String {
-    let count = s.chars().count();
-    if count <= max {
-        s.to_string()
-    } else if max > 1 {
-        let mut out: String = s.chars().take(max - 1).collect();
-        out.push('…');
-        out
-    } else {
-        String::new()
-    }
-}
-
-fn write_str(grid: &mut CellGrid, x0: u16, y: u16, text: &str, fg: Rgb, bg: Rgb) -> u16 {
-    let mut x = x0;
-    for ch in text.chars() {
-        if x >= grid.width() {
-            break;
-        }
-        grid.set(x, y, Cell { ch, fg, bg });
-        x = x.saturating_add(1);
-    }
-    x
-}
 
 #[cfg(test)]
 mod tests {
@@ -136,8 +113,9 @@ mod tests {
         };
         render_now_playing(&mut grid, 0, 0, 60, &state, &theme);
 
-        // Line 1 should have title in fg, album in dim.
-        let line1_start = 62;
+        // Line 1 (y=1) at indent 2: row_offset + indent = width * 1 + 2
+        let w = grid.width() as usize;
+        let line1_start = w + 2; // y=1, x=2
         assert_eq!(grid.cells()[line1_start].ch, 'T');
         assert_eq!(grid.cells()[line1_start].fg, theme.get(Token::Foreground));
     }
@@ -170,7 +148,8 @@ mod tests {
         render_now_playing(&mut grid, 0, 0, 60, &state, &theme);
 
         // Line 0 should be blank (no artist), line 1 should have title.
-        let line1_start = 62;
+        let w = grid.width() as usize;
+        let line1_start = w + 2; // y=1, x=2
         assert_eq!(grid.cells()[line1_start].ch, 'T');
     }
 }

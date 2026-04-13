@@ -3,6 +3,7 @@
 //! When the user presses q, the screen fades to black before
 //! terminal cleanup.
 
+use crate::tui::theme::Theme;
 use crate::tui::transition::easing;
 use crate::visualiser::cell_grid::{Cell, CellGrid, Rgb};
 
@@ -13,7 +14,9 @@ pub struct QuitFade {
     active: bool,
 }
 
-/// Duration of the quit fade in frames.
+/// Duration of the quit fade (10 frames = 333 ms at 30 fps).
+/// Fast enough to feel responsive, slow enough for the eye to
+/// register the fade rather than an abrupt cut.
 const QUIT_FRAMES: u16 = 10;
 
 impl QuitFade {
@@ -71,6 +74,20 @@ impl QuitFade {
                 );
             }
         }
+    }
+}
+
+impl super::Overlay for QuitFade {
+    fn tick(&mut self) {
+        QuitFade::tick(self);
+    }
+
+    fn is_active(&self) -> bool {
+        self.active
+    }
+
+    fn apply(&mut self, grid: &mut CellGrid, _theme: &Theme) {
+        QuitFade::apply(self, grid);
     }
 }
 

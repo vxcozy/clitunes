@@ -6,11 +6,14 @@
 use crate::tui::theme::{Theme, Token};
 use crate::visualiser::cell_grid::{Cell, CellGrid, Rgb};
 
-/// Display width of the volume bar in cells.
+/// Display width of the volume bar in cells. 20 cells covers 5%
+/// increments visually, readable without dominating the UI.
 const BAR_WIDTH: u16 = 20;
-/// Frames to display before starting fade (1.5s at 30fps).
+/// Frames to hold at full opacity before fading (45 frames = 1.5 s
+/// at 30 fps — long enough to read, short enough to not linger).
 const DISPLAY_FRAMES: u16 = 45;
-/// Fade-out duration in frames.
+/// Fade-out duration in frames (6 frames = 200 ms — fast enough to
+/// feel responsive, slow enough to not pop).
 const FADE_FRAMES: u16 = 6;
 
 /// Volume overlay state.
@@ -108,6 +111,20 @@ impl VolumeOverlay {
     }
 }
 
+impl super::Overlay for VolumeOverlay {
+    fn tick(&mut self) {
+        VolumeOverlay::tick(self);
+    }
+
+    fn is_active(&self) -> bool {
+        self.is_visible()
+    }
+
+    fn apply(&mut self, grid: &mut CellGrid, theme: &Theme) {
+        self.render(grid, theme);
+    }
+}
+
 fn blend_with_opacity(fg: Rgb, bg: Rgb, opacity: f32) -> Rgb {
     Rgb::new(
         ((fg.r as f32 * opacity + bg.r as f32 * (1.0 - opacity)).round()) as u8,
@@ -141,14 +158,20 @@ mod tests {
     fn fade_starts_after_display_frames() {
         let mut v = VolumeOverlay::default();
         v.show(50);
+        // After DISPLAY_FRAMES ticks, we've consumed the hold period
+        // but haven't entered the fade — opacity should still be 1.0.
         for _ in 0..DISPLAY_FRAMES {
             v.tick();
         }
-        assert!((v.opacity() - 1.0).abs() < 0.2);
+        assert!(
+            (v.opacity() - 1.0).abs() < f32::EPSILON,
+            "opacity should be exactly 1.0 before fade, got {}",
+            v.opacity()
+        );
         for _ in 0..FADE_FRAMES {
             v.tick();
         }
-        assert!(v.opacity() < 0.1);
+        assert_eq!(v.opacity(), 0.0, "should be fully faded after all frames");
     }
 
     #[test]

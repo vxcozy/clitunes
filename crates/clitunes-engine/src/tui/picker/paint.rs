@@ -18,7 +18,7 @@
 //! - Min width  32 cells (narrower truncates station names).
 //! - Body height is always `CURATED_SLOT_COUNT` rows.
 //! - Chrome (border 2 + header 2 + footer 2) is 6 rows on top of the
-//!   body, so total min height is ~18 rows.
+//!   body, so total height is 6 + `CURATED_SLOT_COUNT` = 18 rows.
 //!
 //! If the terminal is smaller than the min box, [`paint_picker`]
 //! **degrades gracefully**:
@@ -50,12 +50,12 @@ use crate::visualiser::cell_grid::{Cell, CellGrid, Rgb};
 const HEADER_PRIMARY: &str = "First time? Pick a starting point.";
 const HEADER_SECONDARY: &str = "You can change it anytime.";
 const FOOTER: &str = "↑/↓ move   enter select   s hide   q quit";
-const FOOTER_VIZ: &str = "n/p cycle viz · auralis · tideline · cascade";
+const FOOTER_VIZ: &str = "n/p cycle viz · plasma · ripples · tunnel · metaballs · vortex · fire · matrix · moiré";
 
 /// Minimum comfortable modal dimensions. See [`paint_picker`] for the
 /// fallback behavior when the grid is smaller.
 pub const MIN_MODAL_W: u16 = 32;
-pub const MIN_MODAL_H: u16 = 19;
+pub const MIN_MODAL_H: u16 = 18;
 pub const MAX_MODAL_W: u16 = 64;
 
 /// Public paint entry point. Paints the picker modal on top of
@@ -97,7 +97,7 @@ pub fn paint_picker(
     let selected = selected.min(list.stations.len().saturating_sub(1));
 
     let modal_w = grid_w.min(MAX_MODAL_W).max(MIN_MODAL_W.min(grid_w));
-    let chrome_min_h: u16 = 7; // border*2 + header*2 + footer*3
+    let chrome_min_h: u16 = 6; // border*2 + header*2 + footer*2
     let visible_body = (grid_h.saturating_sub(chrome_min_h)).min(CURATED_SLOT_COUNT as u16);
     if visible_body == 0 {
         return paint_fallback_banner(grid, border_fg, bg);
@@ -357,8 +357,14 @@ fn write_centered(
     bg: Rgb,
 ) {
     let count = text.chars().count() as u16;
-    let pad = inner_w.saturating_sub(count) / 2;
-    write_text(grid, inner_x0 + pad, y, text, fg, bg);
+    if count <= inner_w {
+        let pad = (inner_w - count) / 2;
+        write_text(grid, inner_x0 + pad, y, text, fg, bg);
+    } else {
+        // Truncate with ellipsis to fit within the modal.
+        let truncated = truncate_or_pad(text, inner_w as usize);
+        write_text(grid, inner_x0, y, &truncated, fg, bg);
+    }
 }
 
 #[cfg(test)]
@@ -416,10 +422,11 @@ mod tests {
         assert!(rect.height() >= 6);
 
         // Find at least one non-space cell inside the rect (border glyph).
+        let w = grid.width() as usize;
         let mut painted_something = false;
         for y in rect.y0..rect.y1 {
             for x in rect.x0..rect.x1 {
-                let idx = (y as usize) * 80 + x as usize;
+                let idx = (y as usize) * w + x as usize;
                 let c = grid.cells()[idx];
                 if c.ch != ' ' && c.ch != '\0' {
                     painted_something = true;
@@ -439,14 +446,15 @@ mod tests {
         let list = baked_list();
         let theme = default_theme();
         let rect = paint_picker(&mut grid, &list, 3, &theme).expect("rect");
-        // Body row 3 = rect.y0 + 3 + (3 - scroll). For a 12-item list
-        // in a ~12-row window scroll is 0, so selection row = y0 + 6.
+        let w = grid.width() as usize;
+        // Body starts at y0 + 3 (border + 2 header lines). With a
+        // 12-item list fitting entirely in the window, scroll = 0, so
+        // selection index 3 is at body row 3.
         let body_y0 = rect.y0 + 3;
         let selection_y = body_y0 + 3;
         let inner_x0 = rect.x0 + 2;
-        let idx = (selection_y as usize) * 80 + inner_x0 as usize;
+        let idx = (selection_y as usize) * w + inner_x0 as usize;
         let cell = grid.cells()[idx];
-        // Selected row uses surface-bright bg with accent ▸ indicator.
         assert_eq!(cell.bg, theme.get(Token::SurfaceBright));
         assert_eq!(cell.ch, '▸');
         assert_eq!(cell.fg, theme.get(Token::Accent));
@@ -458,10 +466,11 @@ mod tests {
         let list = baked_list();
         let theme = default_theme();
         let rect = paint_picker(&mut grid, &list, 3, &theme).expect("rect");
+        let w = grid.width() as usize;
         // Row 0 is not selected (selected = 3).
         let body_y0 = rect.y0 + 3;
         let inner_x0 = rect.x0 + 2;
-        let idx = (body_y0 as usize) * 80 + (inner_x0 + 1) as usize;
+        let idx = (body_y0 as usize) * w + (inner_x0 + 1) as usize;
         let cell = grid.cells()[idx];
         assert_eq!(cell.bg, theme.get(Token::Surface));
     }

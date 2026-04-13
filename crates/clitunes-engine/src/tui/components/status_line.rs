@@ -5,8 +5,9 @@
 //! ▸ PLAYING  lofi hip hop radio  ━━━━━━━━━━━━━━━━━●━━━  3:42  ◼ vol 80%
 //! ```
 
+use crate::tui::text::{truncate_str, write_str};
 use crate::tui::theme::{Theme, Token};
-use crate::visualiser::cell_grid::{Cell, CellGrid, Rgb};
+use crate::visualiser::cell_grid::{Cell, CellGrid};
 
 /// Playback state for the transport bar.
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
@@ -119,30 +120,6 @@ fn format_time(secs: u32) -> String {
     format!("{m}:{s:02}")
 }
 
-fn truncate_str(s: &str, max: usize) -> String {
-    let count = s.chars().count();
-    if count <= max {
-        s.to_string()
-    } else if max > 1 {
-        let mut out: String = s.chars().take(max - 1).collect();
-        out.push('…');
-        out
-    } else {
-        String::new()
-    }
-}
-
-fn write_str(grid: &mut CellGrid, x0: u16, y: u16, text: &str, fg: Rgb, bg: Rgb) -> u16 {
-    let mut x = x0;
-    for ch in text.chars() {
-        if x >= grid.width() {
-            break;
-        }
-        grid.set(x, y, Cell { ch, fg, bg });
-        x = x.saturating_add(1);
-    }
-    x
-}
 
 #[cfg(test)]
 mod tests {

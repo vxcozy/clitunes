@@ -20,12 +20,28 @@ use std::time::Instant;
 
 use crate::tui::picker::curated_seed::CuratedList;
 
-/// Maximum time between keypresses to count as "rapid" for momentum.
+/// Maximum time between keypresses to count as "rapid" for momentum
+/// (150 ms). Tuned so that holding an arrow key at typical repeat
+/// rates (~80–100 ms) always counts as rapid, while deliberate
+/// pauses between individual presses (~200+ ms) always reset.
 const MOMENTUM_THRESHOLD_MS: u128 = 150;
-/// Keypresses before accelerating to speed 2.
+/// Rapid-press count before accelerating to speed 2 (move 2 items
+/// per keypress). Five presses is roughly 0.5 s of held key.
 const ACCEL_TIER_1: usize = 5;
-/// Keypresses before accelerating to speed 3.
+/// Rapid-press count before accelerating to speed 3 (move 3 items
+/// per keypress). Ten presses is roughly 1 s of held key.
 const ACCEL_TIER_2: usize = 10;
+
+/// Map a rapid-press count to a scroll speed (1, 2, or 3).
+fn speed_for_count(count: usize) -> usize {
+    if count >= ACCEL_TIER_2 {
+        3
+    } else if count >= ACCEL_TIER_1 {
+        2
+    } else {
+        1
+    }
+}
 
 /// Result of handling a single key press.
 #[derive(Debug, PartialEq, Eq)]
@@ -128,25 +144,13 @@ impl PickerState {
         }
         self.last_nav_at = Some(now);
 
-        if self.rapid_count >= ACCEL_TIER_2 {
-            3
-        } else if self.rapid_count >= ACCEL_TIER_1 {
-            2
-        } else {
-            1
-        }
+        speed_for_count(self.rapid_count)
     }
 
     /// Current momentum scroll speed (1, 2, or 3). For testing.
     #[cfg(test)]
     fn scroll_speed(&self) -> usize {
-        if self.rapid_count >= ACCEL_TIER_2 {
-            3
-        } else if self.rapid_count >= ACCEL_TIER_1 {
-            2
-        } else {
-            1
-        }
+        speed_for_count(self.rapid_count)
     }
 
     /// Handle a key byte from the raw-stdin reader. Arrow keys are

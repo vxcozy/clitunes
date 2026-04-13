@@ -21,6 +21,12 @@ pub fn fade(dst: &mut CellGrid, src: &CellGrid, target: &CellGrid, t: f32) {
 }
 
 /// Slide: target slides in from `direction`, pushing source out.
+///
+/// For each output cell the function computes which grid (source or
+/// target) to sample and at what index. The four directions collapse
+/// into two cases — positive (Left/Up: source shifts by +offset) and
+/// negative (Right/Down: source shifts by −offset) — and the axis is
+/// either horizontal (x varies) or vertical (y varies).
 pub fn slide(
     dst: &mut CellGrid,
     src: &CellGrid,
@@ -33,84 +39,43 @@ pub fn slide(
     let cells_src = src.cells();
     let cells_tgt = target.cells();
 
-    match direction {
-        SlideDirection::Left => {
-            let offset = (t * w as f32).round() as usize;
-            for y in 0..h {
-                for x in 0..w {
-                    let idx = y * w + x;
-                    let cell = if x + offset < w {
-                        // Source region (shifted right by offset).
-                        cells_src[y * w + x + offset]
+    let horizontal = matches!(direction, SlideDirection::Left | SlideDirection::Right);
+    let positive = matches!(direction, SlideDirection::Left | SlideDirection::Up);
+    let axis_len = if horizontal { w } else { h };
+    let offset = (t * axis_len as f32).round() as usize;
+
+    for y in 0..h {
+        for x in 0..w {
+            let idx = y * w + x;
+            let pos = if horizontal { x } else { y };
+
+            let cell = if positive {
+                if pos + offset < axis_len {
+                    let si = if horizontal { y * w + x + offset } else { (y + offset) * w + x };
+                    cells_src[si]
+                } else {
+                    let tp = pos + offset - axis_len;
+                    if tp < axis_len {
+                        let ti = if horizontal { y * w + tp } else { tp * w + x };
+                        cells_tgt[ti]
                     } else {
-                        // Target region (sliding in from right).
-                        let tx = x + offset - w;
-                        if tx < w {
-                            cells_tgt[y * w + tx]
-                        } else {
-                            cells_tgt[idx]
-                        }
-                    };
-                    dst.set(x as u16, y as u16, cell);
+                        cells_tgt[idx]
+                    }
                 }
-            }
-        }
-        SlideDirection::Right => {
-            let offset = (t * w as f32).round() as usize;
-            for y in 0..h {
-                for x in 0..w {
-                    let idx = y * w + x;
-                    let cell = if x >= offset {
-                        cells_src[y * w + x - offset]
-                    } else {
-                        let tx = w - offset + x;
-                        if tx < w {
-                            cells_tgt[y * w + tx]
-                        } else {
-                            cells_tgt[idx]
-                        }
-                    };
-                    dst.set(x as u16, y as u16, cell);
+            } else if pos >= offset {
+                let si = if horizontal { y * w + x - offset } else { (y - offset) * w + x };
+                cells_src[si]
+            } else {
+                let tp = axis_len - offset + pos;
+                if tp < axis_len {
+                    let ti = if horizontal { y * w + tp } else { tp * w + x };
+                    cells_tgt[ti]
+                } else {
+                    cells_tgt[idx]
                 }
-            }
-        }
-        SlideDirection::Up => {
-            let offset = (t * h as f32).round() as usize;
-            for y in 0..h {
-                for x in 0..w {
-                    let idx = y * w + x;
-                    let cell = if y + offset < h {
-                        cells_src[(y + offset) * w + x]
-                    } else {
-                        let ty = y + offset - h;
-                        if ty < h {
-                            cells_tgt[ty * w + x]
-                        } else {
-                            cells_tgt[idx]
-                        }
-                    };
-                    dst.set(x as u16, y as u16, cell);
-                }
-            }
-        }
-        SlideDirection::Down => {
-            let offset = (t * h as f32).round() as usize;
-            for y in 0..h {
-                for x in 0..w {
-                    let idx = y * w + x;
-                    let cell = if y >= offset {
-                        cells_src[(y - offset) * w + x]
-                    } else {
-                        let ty = h - offset + y;
-                        if ty < h {
-                            cells_tgt[ty * w + x]
-                        } else {
-                            cells_tgt[idx]
-                        }
-                    };
-                    dst.set(x as u16, y as u16, cell);
-                }
-            }
+            };
+
+            dst.set(x as u16, y as u16, cell);
         }
     }
 }
@@ -135,6 +100,11 @@ pub fn dissolve(dst: &mut CellGrid, src: &CellGrid, target: &CellGrid, t: f32, t
     }
 }
 
+/// Soft edge width for wipe transitions in normalised [0, 1] space.
+/// 5% of the axis produces a ~4-cell gradient at 80 columns — wide
+/// enough to look smooth, narrow enough to feel decisive.
+const WIPE_EDGE: f32 = 0.05;
+
 /// Wipe: directional sweep with a soft edge.
 pub fn wipe(
     dst: &mut CellGrid,
@@ -149,8 +119,7 @@ pub fn wipe(
     let cells_tgt = target.cells();
     let grid_w = dst.width();
     let grid_h = dst.height();
-    // Soft edge width in normalised space.
-    let edge = 0.05;
+    let edge = WIPE_EDGE;
 
     for y in 0..grid_h {
         for x in 0..grid_w {

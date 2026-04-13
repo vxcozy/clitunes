@@ -39,16 +39,23 @@ pub use state::{key_from_bytes, PickerAction, PickerKey, PickerState};
 use crate::tui::transition::easing;
 use crate::tui::transition::{Transition, TransitionMode};
 
+/// Fade-in duration (8 frames = 267 ms at 30 fps). Slightly longer
+/// than fade-out so the picker feels like it settles in gently.
+const PICKER_FADE_IN_FRAMES: u16 = 8;
+/// Fade-out duration (6 frames = 200 ms at 30 fps). Shorter than
+/// fade-in so dismissal feels snappy and doesn't delay the user.
+const PICKER_FADE_OUT_FRAMES: u16 = 6;
+
 /// Picker transition state for fade-in and fade-out.
 #[derive(Clone, Debug, Default)]
 pub enum PickerTransition {
     /// No transition in progress — picker is fully visible or fully hidden.
     #[default]
     Idle,
-    /// Fading in (8 frames, ease_out_cubic).
+    /// Fading in (`PICKER_FADE_IN_FRAMES`, ease_out_cubic).
     FadingIn(Transition),
-    /// Fading out (6 frames, ease_in_cubic). Picker should remain painted
-    /// until the fade completes.
+    /// Fading out (`PICKER_FADE_OUT_FRAMES`, ease_in_cubic). Picker
+    /// should remain painted until the fade completes.
     FadingOut(Transition),
 }
 
@@ -58,7 +65,7 @@ impl PickerTransition {
         Self::FadingIn(Transition::new(
             TransitionMode::Fade,
             easing::ease_out_cubic,
-            8,
+            PICKER_FADE_IN_FRAMES,
         ))
     }
 
@@ -67,7 +74,7 @@ impl PickerTransition {
         Self::FadingOut(Transition::new(
             TransitionMode::Fade,
             easing::ease_in_cubic,
-            6,
+            PICKER_FADE_OUT_FRAMES,
         ))
     }
 
@@ -118,25 +125,27 @@ mod tests {
     use super::*;
 
     #[test]
-    fn fade_in_lasts_8_frames() {
+    fn fade_in_completes_in_expected_frames() {
         let mut pt = PickerTransition::start_fade_in();
-        let mut frames = 0;
+        let mut active_ticks = 0;
         while pt.tick() {
-            frames += 1;
+            active_ticks += 1;
         }
-        // tick returns false on the 8th call (done), so we get 7 "true" ticks + 1 final.
-        assert_eq!(frames, 7);
+        // tick() advances one frame and returns false when the
+        // transition finishes, so we see PICKER_FADE_IN_FRAMES - 1
+        // active ticks before the final tick returns false.
+        assert_eq!(active_ticks, PICKER_FADE_IN_FRAMES - 1);
         assert!(!pt.is_active());
     }
 
     #[test]
-    fn fade_out_lasts_6_frames() {
+    fn fade_out_completes_in_expected_frames() {
         let mut pt = PickerTransition::start_fade_out();
-        let mut frames = 0;
+        let mut active_ticks = 0;
         while pt.tick() {
-            frames += 1;
+            active_ticks += 1;
         }
-        assert_eq!(frames, 5);
+        assert_eq!(active_ticks, PICKER_FADE_OUT_FRAMES - 1);
         assert!(!pt.is_active());
     }
 

@@ -14,6 +14,10 @@ pub enum VisualiserId {
     Starfield,
     Tideline,
     Cascade,
+    Fire,
+    Matrix,
+    Moire,
+    Vortex,
 }
 
 impl VisualiserId {
@@ -27,6 +31,10 @@ impl VisualiserId {
             Self::Starfield => "starfield",
             Self::Tideline => "tideline",
             Self::Cascade => "cascade",
+            Self::Fire => "fire",
+            Self::Matrix => "matrix",
+            Self::Moire => "moire",
+            Self::Vortex => "vortex",
         }
     }
 
@@ -40,6 +48,10 @@ impl VisualiserId {
             "starfield" => Some(Self::Starfield),
             "tideline" => Some(Self::Tideline),
             "cascade" => Some(Self::Cascade),
+            "fire" => Some(Self::Fire),
+            "matrix" => Some(Self::Matrix),
+            "moire" => Some(Self::Moire),
+            "vortex" => Some(Self::Vortex),
             _ => None,
         }
     }

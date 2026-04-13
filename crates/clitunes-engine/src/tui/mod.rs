@@ -22,6 +22,8 @@ pub mod components;
 pub mod micro;
 pub mod persistence;
 #[cfg(feature = "visualiser")]
+pub mod text;
+#[cfg(feature = "visualiser")]
 pub mod theme;
 #[cfg(feature = "visualiser")]
 pub mod transition;

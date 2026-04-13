@@ -52,7 +52,7 @@ fn opens_a_default_device_or_skips_gracefully() {
     seed_ring_with_tone(&ring, 2.0);
 
     let reader = ring.reader();
-    let out = match CpalOutput::start(reader, CpalOutputConfig::default()) {
+    let out = match CpalOutput::start(reader, CpalOutputConfig::default(), PcmFormat::STUDIO.sample_rate) {
         Ok(o) => o,
         Err(e) => {
             eprintln!("skipping: cpal couldn't open a default device: {e:#}");
@@ -93,7 +93,7 @@ fn underrun_counter_read_does_not_panic_after_drop() {
     seed_ring_with_tone(&ring, 0.1);
 
     let reader = ring.reader();
-    let out = match CpalOutput::start(reader, CpalOutputConfig::default()) {
+    let out = match CpalOutput::start(reader, CpalOutputConfig::default(), PcmFormat::STUDIO.sample_rate) {
         Ok(o) => o,
         Err(e) => {
             eprintln!("skipping: cpal couldn't open a default device: {e:#}");

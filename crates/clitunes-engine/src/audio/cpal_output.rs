@@ -7,7 +7,8 @@
 //!
 //! # Format negotiation
 //!
-//! The ring is canonicalised on 48 kHz stereo f32. Every cpal backend
+//! The ring runs at whatever rate the device negotiates (probed via
+//! [`CpalOutput::probe_device_rate`] before ring creation). Every cpal backend
 //! supports a different subset of rates / channel counts / sample
 //! formats, so [`select_output_config`] walks the device's advertised
 //! `SupportedStreamConfigRange`s with a strict preference order:
@@ -116,15 +117,42 @@ pub struct CpalOutput {
 }
 
 impl CpalOutput {
+    /// Probe the default (or named) output device and return the sample
+    /// rate it would negotiate, without opening a stream. This lets the
+    /// caller create the PCM ring at the device's native rate so the
+    /// audio callback can skip resampling entirely.
+    pub fn probe_device_rate(cfg: &CpalOutputConfig) -> u32 {
+        let host = cpal::default_host();
+        let device = match pick_device(&host, cfg.device_name.as_deref()) {
+            Ok(d) => d,
+            Err(_) => return PRIMARY_RATE,
+        };
+        let supported: Vec<SupportedStreamConfigRange> = match device.supported_output_configs() {
+            Ok(iter) => iter.collect(),
+            Err(_) => return PRIMARY_RATE,
+        };
+        match select_output_config(&supported) {
+            Some(cfg) => cfg.sample_rate().0,
+            None => device
+                .default_output_config()
+                .map(|c| c.sample_rate().0)
+                .unwrap_or(PRIMARY_RATE),
+        }
+    }
+
     /// Open the host's default (or named) output device, negotiate the
-    /// best-matching format for our 48 kHz stereo f32 ring, install an
-    /// output callback that drains `reader`, and start the stream.
+    /// best-matching format for our ring, install an output callback
+    /// that drains `reader`, and start the stream.
+    ///
+    /// `ring_rate` is the sample rate of the PCM ring. When it matches
+    /// the device's negotiated rate (the common case after probing),
+    /// the callback skips the resampler entirely.
     ///
     /// Errors bubble up through `anyhow::Result` with enough context to
     /// pinpoint which step failed (host / device / config / build /
     /// play). The caller is expected to log the error and fall back to
     /// no-audio mode rather than panic.
-    pub fn start(reader: PcmRingReader, cfg: CpalOutputConfig) -> Result<Self> {
+    pub fn start(reader: PcmRingReader, cfg: CpalOutputConfig, ring_rate: u32) -> Result<Self> {
         let host = cpal::default_host();
         let device = pick_device(&host, cfg.device_name.as_deref())
             .context("no usable cpal output device")?;
@@ -167,7 +195,8 @@ impl CpalOutput {
 
         let stream_config: StreamConfig = selected.config();
         let underruns = Arc::new(AtomicU64::new(0));
-        let stream = build_stream(&device, &stream_config, &negotiated, reader, &underruns)?;
+        let stream =
+            build_stream(&device, &stream_config, &negotiated, reader, &underruns, ring_rate)?;
         stream.play().context("cpal: Stream::play failed")?;
 
         Ok(Self {
@@ -267,6 +296,7 @@ fn build_stream(
     negotiated: &NegotiatedFormat,
     reader: PcmRingReader,
     underruns: &Arc<AtomicU64>,
+    ring_rate: u32,
 ) -> Result<Stream> {
     // cpal builds a dedicated stream constructor per sample type, so
     // we branch once here and each arm captures a monomorphised
@@ -279,7 +309,7 @@ fn build_stream(
         SampleFormat::F32 => device
             .build_output_stream::<f32, _, _>(
                 config,
-                make_callback::<f32>(reader, Arc::clone(underruns), negotiated.clone()),
+                make_callback::<f32>(reader, Arc::clone(underruns), negotiated.clone(), ring_rate),
                 err_cb,
                 timeout,
             )
@@ -287,7 +317,7 @@ fn build_stream(
         SampleFormat::I16 => device
             .build_output_stream::<i16, _, _>(
                 config,
-                make_callback::<i16>(reader, Arc::clone(underruns), negotiated.clone()),
+                make_callback::<i16>(reader, Arc::clone(underruns), negotiated.clone(), ring_rate),
                 err_cb,
                 timeout,
             )
@@ -295,7 +325,7 @@ fn build_stream(
         SampleFormat::U16 => device
             .build_output_stream::<u16, _, _>(
                 config,
-                make_callback::<u16>(reader, Arc::clone(underruns), negotiated.clone()),
+                make_callback::<u16>(reader, Arc::clone(underruns), negotiated.clone(), ring_rate),
                 err_cb,
                 timeout,
             )
@@ -392,19 +422,20 @@ fn make_callback<T>(
     mut reader: PcmRingReader,
     underruns: Arc<AtomicU64>,
     negotiated: NegotiatedFormat,
+    ring_rate: u32,
 ) -> impl FnMut(&mut [T], &cpal::OutputCallbackInfo) + Send + 'static
 where
     T: DeviceSample,
 {
     // Pre-allocated scratch buffers. `ring_scratch` holds frames
-    // drained from the PCM ring (at the ring's 48 kHz rate).
+    // drained from the PCM ring (at the ring's native rate).
     // `device_scratch` holds the resampled frames at the device's
     // native rate. When `ring_rate == device_rate` only `ring_scratch`
     // is used.
     let mut ring_scratch: Vec<StereoFrame> = vec![StereoFrame::SILENCE; SCRATCH_CAPACITY_FRAMES];
     let mut device_scratch: Vec<StereoFrame> = vec![StereoFrame::SILENCE; SCRATCH_CAPACITY_FRAMES];
-    let needs_resample = negotiated.sample_rate != PRIMARY_RATE;
-    let mut resampler = LinearResampler::new(PRIMARY_RATE, negotiated.sample_rate);
+    let needs_resample = negotiated.sample_rate != ring_rate;
+    let mut resampler = LinearResampler::new(ring_rate, negotiated.sample_rate);
     let channels = negotiated.channels;
 
     move |data: &mut [T], _info: &cpal::OutputCallbackInfo| {
@@ -441,7 +472,7 @@ where
             // ring frames. Round up and add a cushion so the linear
             // resampler has enough input to produce exactly
             // `device_frames` outputs.
-            let ratio = PRIMARY_RATE as f64 / negotiated.sample_rate as f64;
+            let ratio = ring_rate as f64 / negotiated.sample_rate as f64;
             let need_ring =
                 (((device_frames as f64 * ratio).ceil() as usize) + 2).min(SCRATCH_CAPACITY_FRAMES);
 

@@ -5,9 +5,11 @@
 
 use crate::visualiser::cell_grid::Rgb;
 
-/// Total pulse animation frames (two flashes).
+/// Two Gaussian peaks at frames 5 and 15 span 20 frames total
+/// (~667 ms at 30 fps). Enough for two distinct flashes.
 const PULSE_FRAMES: u16 = 20;
-/// Hold error message for 3 seconds at 30fps.
+/// After the pulse, hold the error message on screen for 3 seconds
+/// (90 frames at 30 fps) so the user can read it.
 const HOLD_FRAMES: u16 = 90;
 
 /// Error pulse state.
@@ -98,7 +100,7 @@ mod tests {
             .filter(|(_, w)| w[1] > w[0] && w[1] > w[2])
             .map(|(i, _)| i + 1)
             .collect();
-        assert!(peaks.len() >= 2, "expected 2 peaks, got {:?}", peaks);
+        assert_eq!(peaks.len(), 2, "expected exactly 2 peaks, got {:?}", peaks);
     }
 
     #[test]

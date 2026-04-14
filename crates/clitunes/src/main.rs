@@ -26,6 +26,7 @@ use anyhow::{Context, Result};
 use clitunes::auto_spawn;
 use clitunes::client::reconnect::ReconnectingSession;
 use clitunes::client::render_loop::{RenderLoop, RenderLoopConfig};
+use clitunes_core::LibraryCategory;
 use clitunes_engine::observability;
 use clitunes_engine::pcm::spmc_ring::ShmRegion;
 use clitunes_engine::proto::events::Event;
@@ -89,6 +90,7 @@ fn main() -> Result<()> {
         }
         CliMode::Pane { name, viz } => rt.block_on(run_pane(name, viz, socket_path, app_stop)),
         CliMode::Headless(verb) => rt.block_on(run_headless(verb, &socket_path)),
+        CliMode::HeadlessBrowse(verb) => rt.block_on(run_headless_browse(verb, &socket_path)),
         CliMode::StatusJson => rt.block_on(run_status_json(&socket_path)),
         CliMode::Help | CliMode::Auth => unreachable!(),
     }
@@ -123,6 +125,10 @@ fn run_auth() -> Result<()> {
 
 async fn run_headless(verb: Verb, socket_path: &std::path::Path) -> Result<()> {
     clitunes::client::headless::dispatch(socket_path, verb).await
+}
+
+async fn run_headless_browse(verb: Verb, socket_path: &std::path::Path) -> Result<()> {
+    clitunes::client::headless::dispatch_browse(socket_path, verb).await
 }
 
 // ─── dispatch: status --json ───────────────────────────────────────
@@ -401,8 +407,15 @@ struct TuiArgs {
 enum CliMode {
     Help,
     FullTui(TuiArgs),
-    Pane { name: String, viz: Option<String> },
+    Pane {
+        name: String,
+        viz: Option<String>,
+    },
     Headless(Verb),
+    /// Browse verbs (search / browse-library / browse-playlist). Uses a
+    /// different dispatcher that prints the result event as JSON before
+    /// the CommandResult.
+    HeadlessBrowse(Verb),
     StatusJson,
     Auth,
 }
@@ -528,6 +541,45 @@ impl CliMode {
                     anyhow::bail!("usage: clitunes status [--json]")
                 }
             }
+            "search" => {
+                let query = args
+                    .get(1)
+                    .ok_or_else(|| anyhow::anyhow!("search requires a query string"))?
+                    .clone();
+                let limit = args.get(2).and_then(|s| s.parse::<u32>().ok());
+                Ok(CliMode::HeadlessBrowse(Verb::Search { query, limit }))
+            }
+            "browse" => {
+                let category = args.get(1).ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "browse requires a category: saved_tracks | saved_albums | playlists | recently_played"
+                    )
+                })?;
+                let category = match category.as_str() {
+                    "saved_tracks" => LibraryCategory::SavedTracks,
+                    "saved_albums" => LibraryCategory::SavedAlbums,
+                    "playlists" => LibraryCategory::Playlists,
+                    "recently_played" => LibraryCategory::RecentlyPlayed,
+                    other => anyhow::bail!(
+                        "unknown browse category: {other}. Expected: saved_tracks, saved_albums, playlists, recently_played"
+                    ),
+                };
+                let limit = args.get(2).and_then(|s| s.parse::<u32>().ok());
+                Ok(CliMode::HeadlessBrowse(Verb::BrowseLibrary {
+                    category,
+                    limit,
+                }))
+            }
+            "browse-playlist" => {
+                let id = args
+                    .get(1)
+                    .ok_or_else(|| {
+                        anyhow::anyhow!("browse-playlist requires a playlist id or URI")
+                    })?
+                    .clone();
+                let limit = args.get(2).and_then(|s| s.parse::<u32>().ok());
+                Ok(CliMode::HeadlessBrowse(Verb::BrowsePlaylist { id, limit }))
+            }
             // Legacy full-TUI flags
             _ => {
                 let mut source = SourceChoice::Auto;
@@ -586,6 +638,9 @@ USAGE:
     clitunes viz <name>                     Switch visualiser
     clitunes source radio <uuid>            Switch to radio station
     clitunes source local <path>            Play local file/directory
+    clitunes search <query> [limit]         Search Spotify; prints SearchResults JSON
+    clitunes browse <category> [limit]      List saved library (saved_tracks | saved_albums | playlists | recently_played)
+    clitunes browse-playlist <id> [limit]   List tracks in a Spotify playlist
     clitunes status [--json]                Print current status as JSON
     clitunes auth                           Authenticate with Spotify (headless-safe)
 

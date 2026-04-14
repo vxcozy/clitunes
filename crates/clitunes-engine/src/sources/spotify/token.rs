@@ -30,6 +30,24 @@ pub struct SharedTokenProvider {
 
 impl SharedTokenProvider {
     /// Create a provider from a freshly obtained or refreshed token.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use std::time::{Duration, Instant};
+    /// use clitunes_engine::sources::spotify::token::SharedTokenProvider;
+    /// use librespot_oauth::OAuthToken;
+    ///
+    /// let token = OAuthToken {
+    ///     access_token: "access-abc".into(),
+    ///     refresh_token: "refresh-xyz".into(),
+    ///     expires_at: Instant::now() + Duration::from_secs(3600),
+    ///     token_type: "Bearer".into(),
+    ///     scopes: vec!["streaming".into()],
+    /// };
+    /// let provider = SharedTokenProvider::new(token, "/tmp/ignored".into());
+    /// assert_eq!(provider.rspotify_token().access_token, "access-abc");
+    /// ```
     pub fn new(token: OAuthToken, cred_path: PathBuf) -> Self {
         Self { token, cred_path }
     }
@@ -38,7 +56,28 @@ impl SharedTokenProvider {
     ///
     /// The returned token carries the access token, scopes, and an
     /// estimated `expires_at` derived from the librespot-oauth
-    /// `Instant`-based expiry.
+    /// `Instant`-based expiry. Scopes are deduplicated into a
+    /// `HashSet<String>` to match rspotify's `Token::scopes` shape.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use std::time::{Duration, Instant};
+    /// use clitunes_engine::sources::spotify::token::SharedTokenProvider;
+    /// use librespot_oauth::OAuthToken;
+    ///
+    /// let token = OAuthToken {
+    ///     access_token: "live".into(),
+    ///     refresh_token: "r".into(),
+    ///     expires_at: Instant::now() + Duration::from_secs(60),
+    ///     token_type: "Bearer".into(),
+    ///     scopes: vec!["streaming".into(), "user-library-read".into()],
+    /// };
+    /// let provider = SharedTokenProvider::new(token, "/tmp/ignored".into());
+    /// let t = provider.rspotify_token();
+    /// assert!(t.scopes.contains("streaming"));
+    /// assert!(t.refresh_token.is_some());
+    /// ```
     pub fn rspotify_token(&self) -> Token {
         let expires_in = self
             .token

@@ -74,6 +74,24 @@ impl SpotifyWebApi {
     /// Search Spotify for tracks matching `query`. Returns matching
     /// tracks mapped to [`BrowseItem`]s plus the total match count
     /// reported by Spotify.
+    ///
+    /// The return shape is `(Vec<BrowseItem>, u32)` — the second
+    /// element is Spotify's reported `total`, which may exceed the
+    /// number of items returned (search is paginated and capped by
+    /// `limit`). Callers render `items.len()` of `total` in the picker
+    /// footer. When Spotify returns a non-Tracks page (a protocol
+    /// surprise because we asked for `SearchType::Track`), the method
+    /// returns `(Vec::new(), 0)` rather than erroring.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # async fn demo(api: &clitunes_engine::sources::spotify::webapi::SpotifyWebApi) -> anyhow::Result<()> {
+    /// let (items, total) = api.search("boards of canada", Some(10)).await?;
+    /// assert!(items.len() <= 10);
+    /// assert!(total >= items.len() as u32);
+    /// # Ok(()) }
+    /// ```
     pub async fn search(&self, query: &str, limit: Option<u32>) -> Result<(Vec<BrowseItem>, u32)> {
         let limit = limit.or(Some(DEFAULT_LIMIT));
         let result = self

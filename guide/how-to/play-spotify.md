@@ -28,9 +28,40 @@ Credentials are cached at `~/.config/clitunes/spotify/credentials.json`
 
 ### Headless / SSH sessions
 
-If no browser is available, clitunes prints the authorization URL to stderr.
-Copy it to a machine with a browser, complete the login, then paste the
-redirect URL back into the terminal.
+When clitunes detects an SSH session (`$SSH_CONNECTION` set, no `$DISPLAY`
+or `$WAYLAND_DISPLAY`), it skips the browser and prints port-forward
+instructions to stderr instead:
+
+```
+Headless mode detected (SSH session, no display)
+
+The OAuth URL will be printed below. Open it in a browser on a
+machine that can reach this host on port 8898.
+
+If your terminal is remote, set up a port forward first:
+
+  ssh -L 8898:127.0.0.1:8898 <this-host>
+
+Then open the URL in your local browser. The callback will
+route through the tunnel to complete authentication.
+```
+
+Follow those steps: open an SSH tunnel from your local machine with
+`-L 8898:127.0.0.1:8898 <this-host>`, then paste the printed auth URL
+into your local browser. After you approve, Spotify redirects to
+`http://127.0.0.1:8898/login` on your local side, which the tunnel routes
+back to the remote clitunes process. No paste-the-URL-back step needed.
+
+### Authenticate without playing
+
+If you'd rather authenticate up front (for example, to pre-seed creds on
+a headless server), run:
+
+```
+clitunes auth
+```
+
+This runs the OAuth flow and exits after the token is cached.
 
 ## Play a track
 

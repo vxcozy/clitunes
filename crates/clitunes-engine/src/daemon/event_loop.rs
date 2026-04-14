@@ -343,12 +343,8 @@ fn run_source_pipeline(
                     crate::sources::spotify::default_credentials_path().unwrap_or_else(|| {
                         std::path::PathBuf::from("/tmp/clitunes-spotify-creds.json")
                     });
-                let mut spotify = SpotifySource::new(
-                    uri.clone(),
-                    cred_path,
-                    event_tx.clone(),
-                    format.sample_rate,
-                );
+                let mut spotify =
+                    build_spotify_source(uri.clone(), cred_path, event_tx.clone(), &format);
                 send_state(Event::StateChanged {
                     state: PlayState::Playing,
                     source: Some("spotify".into()),
@@ -386,6 +382,23 @@ enum SourceKind {
     Local(Vec<std::path::PathBuf>),
     #[cfg(feature = "spotify")]
     Spotify(String),
+}
+
+/// Construct a [`SpotifySource`] whose resampler target matches the
+/// daemon's probed device rate.
+///
+/// Pinned as a standalone helper (rather than inlined) so the wiring
+/// test in `spotify_wiring_tests` can assert the rate threads through
+/// without a full pipeline boot. Regression guard for the 48kHz
+/// hardcode that previously pitch-shifted Spotify on 44.1kHz hardware.
+#[cfg(feature = "spotify")]
+fn build_spotify_source(
+    uri: String,
+    cred_path: std::path::PathBuf,
+    event_tx: mpsc::Sender<Event>,
+    format: &PcmFormat,
+) -> SpotifySource {
+    SpotifySource::new(uri, cred_path, event_tx, format.sample_rate)
 }
 
 async fn dispatch_verbs(
@@ -712,15 +725,21 @@ fn is_auth_shaped(err: &anyhow::Error) -> bool {
 
 /// Map any auth/webapi error to a `CommandResult { ok: false, .. }`.
 /// Keeps dispatch handlers terse.
+///
+/// Uses `{err:#}` (anyhow's alt formatter) so the full cause chain is
+/// rendered in both the daemon log and the CLI-facing message. The
+/// prior `%err` only printed the outermost `.context()`, which is the
+/// same string we pass as `context` here — so every failure logged as
+/// `"spotify search: spotify search"` with the real cause hidden.
 #[cfg(feature = "webapi")]
 fn webapi_err(cmd_id: &str, context: &str, err: anyhow::Error) -> Event {
     tracing::warn!(
         target: "clitunesd",
-        error = %err,
+        error = format!("{err:#}"),
         context,
         "spotify webapi call failed"
     );
-    Event::command_err(cmd_id, format!("{context}: {err}"))
+    Event::command_err(cmd_id, format!("{context}: {err:#}"))
 }
 
 #[cfg(feature = "webapi")]
@@ -948,5 +967,76 @@ mod webapi_cache_tests {
         cache.invalidate().await;
         cache.invalidate().await;
         assert!(!cache.is_cached().await);
+    }
+}
+
+#[cfg(test)]
+#[cfg(feature = "spotify")]
+mod spotify_wiring_tests {
+    //! Pins the rate-threading wiring between `run_source_pipeline`
+    //! (which owns the probed device `PcmFormat`) and `SpotifySource`
+    //! (which passes the rate down to the resampler target).
+    //!
+    //! The `sources::spotify::sink::target_rate_44100_is_identity_pass`
+    //! test proves the sink does the right thing *when given* 44.1kHz.
+    //! These tests prove the daemon actually *gives* it the device rate,
+    //! not a hardcoded 48kHz. Without this pair, a regression that
+    //! reintroduced `SpotifySource::new(..., 48_000)` at the call site
+    //! would slip through both test suites.
+    use super::*;
+    use clitunes_core::PcmFormat;
+
+    #[test]
+    fn threads_44100_format_rate_to_source() {
+        let (tx, _rx) = mpsc::channel::<Event>(1);
+        let format = PcmFormat {
+            sample_rate: 44_100,
+            channels: 2,
+        };
+        let source = build_spotify_source(
+            "spotify:track:doesnt:matter".into(),
+            std::path::PathBuf::from("/tmp/clitunes-test-creds.json"),
+            tx,
+            &format,
+        );
+        assert_eq!(
+            source.target_sample_rate(),
+            44_100,
+            "44.1kHz device rate must reach the Spotify resampler target"
+        );
+    }
+
+    #[test]
+    fn threads_48000_format_rate_to_source() {
+        let (tx, _rx) = mpsc::channel::<Event>(1);
+        let format = PcmFormat {
+            sample_rate: 48_000,
+            channels: 2,
+        };
+        let source = build_spotify_source(
+            "spotify:track:doesnt:matter".into(),
+            std::path::PathBuf::from("/tmp/clitunes-test-creds.json"),
+            tx,
+            &format,
+        );
+        assert_eq!(source.target_sample_rate(), 48_000);
+    }
+
+    #[test]
+    fn threads_96000_format_rate_to_source() {
+        // Exotic but legal hi-fi rate — proves the helper isn't
+        // clamped/capped and genuinely passes the format field.
+        let (tx, _rx) = mpsc::channel::<Event>(1);
+        let format = PcmFormat {
+            sample_rate: 96_000,
+            channels: 2,
+        };
+        let source = build_spotify_source(
+            "spotify:track:doesnt:matter".into(),
+            std::path::PathBuf::from("/tmp/clitunes-test-creds.json"),
+            tx,
+            &format,
+        );
+        assert_eq!(source.target_sample_rate(), 96_000);
     }
 }

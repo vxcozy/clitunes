@@ -19,6 +19,7 @@
 //! — it belongs to Unit 10 — but the idle timer exposes the API that
 //! socket code will call (`on_client_connected` / `on_client_disconnected`).
 
+pub mod config;
 #[cfg(all(feature = "audio", feature = "radio", feature = "decode"))]
 pub mod event_loop;
 pub mod idle_timer;
@@ -30,6 +31,10 @@ pub mod socket_security;
 #[cfg(feature = "audio")]
 pub mod tee_writer;
 
+pub use config::{
+    config_path_from_env, default_config_path, resolve_config_path, BindMode, ConnectConfig,
+    DaemonConfig, CONFIG_PATH_ENV,
+};
 pub use idle_timer::{Clock, IdleState, IdleTimer, SystemClock, Tick, DEFAULT_IDLE_WINDOW};
 pub use lifecycle::{
     detach, open_private, redirect_stdio_to_devnull, runtime_dir, set_socket_umask, write_pidfile,

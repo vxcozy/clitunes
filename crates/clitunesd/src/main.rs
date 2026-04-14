@@ -17,7 +17,7 @@ use anyhow::{Context, Result};
 use clitunes_engine::daemon::event_loop::DaemonEventLoop;
 use clitunes_engine::daemon::{
     acquire_at, default_log_path, runtime_dir, set_socket_umask, write_pidfile, AcquireOutcome,
-    DetachOutcome, IdleTimer, RotatingLog,
+    DaemonConfig, DetachOutcome, IdleTimer, RotatingLog,
 };
 use tracing_subscriber::prelude::*;
 use tracing_subscriber::{fmt, EnvFilter};
@@ -71,6 +71,14 @@ fn run() -> Result<ExitCode> {
         lock_path = %lock.path().display(),
         log_path = %log_path.display(),
         "clitunesd booted",
+    );
+
+    let config = DaemonConfig::load(None).context("load daemon config")?;
+    tracing::info!(
+        target: "clitunesd",
+        connect_enabled = config.connect.enabled,
+        connect_name = %config.connect.name,
+        "daemon config loaded",
     );
 
     let pid_path = runtime.join("clitunesd.pid");

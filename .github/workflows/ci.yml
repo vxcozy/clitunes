@@ -90,3 +90,31 @@ jobs:
             exit 1
           fi
           echo "D15 holds — librespot excluded from non-spotify builds."
+      - name: Assert connect build still excludes TUI/GPU/image deps
+        run: |
+          set -euo pipefail
+          if cargo tree -e features -p clitunesd --features connect | grep -qE 'wgpu|ratatui|crossterm'; then
+            echo "::error::D15 violated: connect build pulls a visualiser/tui crate"
+            cargo tree -e features -p clitunesd --features connect | grep -E 'wgpu|ratatui|crossterm'
+            exit 1
+          fi
+          if cargo tree -p clitunesd --features connect | grep -qE '^[| ]*image v'; then
+            echo "::error::D15 violated: connect build pulls the image crate"
+            cargo tree -p clitunesd --features connect | grep -E 'image v'
+            exit 1
+          fi
+          echo "D15 holds — connect build has no wgpu/ratatui/crossterm/image."
+      - name: Assert connect build links librespot-connect + librespot-discovery
+        run: |
+          set -euo pipefail
+          if ! cargo tree -p clitunesd --features connect | grep -qE 'librespot-connect'; then
+            echo "::error::connect feature did not pull librespot-connect"
+            exit 1
+          fi
+          if ! cargo tree -p clitunesd --features connect | grep -qE 'librespot-discovery'; then
+            echo "::error::connect feature did not pull librespot-discovery"
+            exit 1
+          fi
+          echo "connect feature correctly pulls librespot-connect + librespot-discovery."
+      - name: Build clitunesd with --features connect
+        run: cargo build -p clitunesd --features connect

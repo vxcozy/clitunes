@@ -44,6 +44,15 @@ spotify = [
     "dep:librespot-oauth",
     "dep:rubato",
 ]
+# Spotify Connect receiver (v1.2). Opt-in; default build does not ship it.
+# Pulls librespot-connect (Spirc state machine) and librespot-discovery
+# (mDNS + /addUser endpoint, pure-Rust libmdns backend). D15-safe: no
+# TUI/GPU/image deps; verified by the d15-connect CI job.
+connect = [
+    "spotify",
+    "dep:librespot-connect",
+    "dep:librespot-discovery",
+]
 # Spotify Web API: search, library, playlists via rspotify. Daemon-safe
 # (no image/TUI deps). Requires `spotify` for shared auth infrastructure.
 webapi = ["spotify", "dep:rspotify", "dep:chrono"]
@@ -102,6 +111,8 @@ librespot-core = { workspace = true, optional = true }
 librespot-playback = { workspace = true, optional = true }
 librespot-metadata = { workspace = true, optional = true }
 librespot-oauth = { workspace = true, optional = true }
+librespot-connect = { workspace = true, optional = true }
+librespot-discovery = { workspace = true, optional = true }
 rubato = { workspace = true, optional = true }
 
 # Spotify Web API (v1.2 webapi feature).

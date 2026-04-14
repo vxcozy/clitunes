@@ -13,6 +13,13 @@ description = "clitunes daemon — audio/sources/control only. D15: no wgpu, rat
 name = "clitunesd"
 path = "src/main.rs"
 
+[features]
+default = []
+# Spotify Connect receiver (v1.2). Opt-in — the default daemon build
+# does not advertise itself over mDNS. Enable with
+# `cargo build -p clitunesd --features connect`.
+connect = ["clitunes-engine/connect"]
+
 [dependencies]
 clitunes-core = { path = "../clitunes-core" }
 clitunes-engine = { path = "../clitunes-engine", default-features = false, features = [

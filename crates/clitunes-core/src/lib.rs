@@ -8,6 +8,7 @@
 //! feature gates in `clitunes-engine`; this crate is safe to include from any
 //! downstream binary.
 
+pub mod browse;
 pub mod now_playing;
 pub mod pcm;
 pub mod state;
@@ -16,6 +17,7 @@ pub mod track;
 pub mod untrusted_string;
 pub mod visualiser;
 
+pub use browse::{BrowseItem, LibraryCategory};
 pub use now_playing::{NowPlaying, NowPlayingEvent};
 pub use pcm::{PcmFormat, StereoFrame};
 pub use state::State;

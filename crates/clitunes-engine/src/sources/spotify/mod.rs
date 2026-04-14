@@ -7,7 +7,11 @@
 pub mod auth;
 pub mod sink;
 
-pub use auth::{default_credentials_path, load_or_authenticate};
+pub use auth::{default_credentials_path, load_credentials, load_or_authenticate, AuthResult};
+#[cfg(feature = "webapi")]
+pub mod token;
+#[cfg(feature = "webapi")]
+pub mod webapi;
 
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -30,7 +34,8 @@ use crate::proto::events::Event;
 use clitunes_core::sanitize;
 
 /// A Spotify playback source. Bridges librespot's Player to the daemon's
-/// audio pipeline via [`SpotifySink`](sink::SpotifySink) and rubato resampling.
+/// audio pipeline via [`SpotifySink`](sink::SpotifySink) and rubato resampling
+/// into the daemon's PCM ring sample rate.
 pub struct SpotifySource {
     /// Spotify track URI to play (e.g. `spotify:track:4PTG3Z6ehGkBFwjybzWkR8`).
     uri: String,
@@ -38,6 +43,11 @@ pub struct SpotifySource {
     credentials_path: PathBuf,
     /// Channel to emit events (NowPlayingChanged, SourceError) to the daemon event loop.
     event_tx: tokio::sync::mpsc::Sender<Event>,
+    /// Target sample rate the sink should resample Spotify's 44.1 kHz
+    /// PCM to. Must match the daemon's PCM ring / audio device rate —
+    /// on 44.1 kHz hardware this is a 1:1 identity pass; on 48 kHz
+    /// hardware the sink upsamples.
+    target_sample_rate: u32,
 }
 
 impl SpotifySource {
@@ -46,15 +56,20 @@ impl SpotifySource {
     /// - `uri`: Spotify URI (e.g. `spotify:track:...`)
     /// - `credentials_path`: path to cached OAuth credentials file
     /// - `event_tx`: sender for daemon events (NowPlaying updates, errors)
+    /// - `target_sample_rate`: PCM ring / audio-device sample rate; the sink
+    ///   resamples librespot's 44.1 kHz output to this rate. Mismatch here
+    ///   causes a pitch-shift regression on non-48 kHz hardware.
     pub fn new(
         uri: String,
         credentials_path: PathBuf,
         event_tx: tokio::sync::mpsc::Sender<Event>,
+        target_sample_rate: u32,
     ) -> Self {
         Self {
             uri,
             credentials_path,
             event_tx,
+            target_sample_rate,
         }
     }
 }
@@ -68,6 +83,7 @@ impl super::Source for SpotifySource {
         let uri_str = self.uri.clone();
         let cred_path = self.credentials_path.clone();
         let event_tx = self.event_tx.clone();
+        let target_sample_rate = self.target_sample_rate;
 
         // Mirror outer stop → inner stop (same pattern as RadioSource).
         let inner_stop = Arc::new(AtomicBool::new(false));
@@ -100,14 +116,21 @@ impl super::Source for SpotifySource {
                         &event_tx,
                         writer,
                         &playback_stop,
+                        target_sample_rate,
                     )
                     .await
                     {
                         error!(error = %e, "spotify playback error");
+                        let err_code = if e.to_string().contains("premium_required") {
+                            Some("premium_required".into())
+                        } else {
+                            None
+                        };
                         let _ = event_tx
                             .send(Event::SourceError {
                                 source: "spotify".into(),
                                 error: e.to_string(),
+                                error_code: err_code,
                             })
                             .await;
                     }
@@ -125,10 +148,17 @@ async fn run_spotify_playback(
     event_tx: &tokio::sync::mpsc::Sender<Event>,
     writer: &mut dyn PcmWriter,
     stop: &AtomicBool,
+    target_sample_rate: u32,
 ) -> Result<()> {
-    // 1. Authenticate.
-    let credentials =
-        auth::load_or_authenticate(cred_path).context("Spotify authentication failed")?;
+    // 1. Authenticate (daemon-safe: refresh only, never interactive).
+    //    Runs on a blocking thread to avoid starving the async runtime
+    //    during the HTTP token-refresh round-trip.
+    let cred_path_owned = cred_path.to_path_buf();
+    let auth_result = tokio::task::spawn_blocking(move || auth::load_credentials(&cred_path_owned))
+        .await
+        .context("credential task panicked")?
+        .context("Spotify authentication failed")?;
+    let credentials = auth_result.credentials;
 
     // 2. Connect session.
     let session_config = SessionConfig::default();
@@ -139,12 +169,36 @@ async fn run_spotify_playback(
         .map_err(|e| anyhow::anyhow!("Spotify session connect failed: {e}"))?;
     info!("spotify: session connected");
 
+    // 2b. Check for Premium account. The `type` attribute may not be
+    //     populated immediately after connect (librespot receives product
+    //     info asynchronously). Give it a brief window to arrive.
+    for _ in 0..10 {
+        let catalogue = session
+            .user_data()
+            .attributes
+            .get("type")
+            .cloned()
+            .unwrap_or_default();
+        if !catalogue.is_empty() {
+            if catalogue != "premium" {
+                anyhow::bail!(
+                    "premium_required: Spotify Premium is required for playback. \
+                     Visit spotify.com/premium to upgrade."
+                );
+            }
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+
     // 3. Parse the track URI.
     let spotify_uri = SpotifyUri::from_uri(uri_str)
         .map_err(|e| anyhow::anyhow!("invalid Spotify URI '{uri_str}': {e}"))?;
 
-    // 4. Create our custom sink with the PCM channel.
-    let (sink, pcm_rx, pcm_notify) = sink::channel();
+    // 4. Create our custom sink with the PCM channel, pinned to the
+    //    daemon ring's sample rate so no downstream rate mismatch
+    //    occurs on non-48 kHz hardware.
+    let (sink, pcm_rx, pcm_notify) = sink::channel(target_sample_rate);
 
     // 5. Create the librespot Player with our sink as the backend.
     let player_config = PlayerConfig::default();
@@ -162,7 +216,10 @@ async fn run_spotify_playback(
     player.load(spotify_uri, true, 0);
     info!(uri = %uri_str, "spotify: track loaded");
 
-    // 8. PCM drain + event monitoring loop.
+    // 8. Track last known position for resume after reconnect.
+    let mut last_position_ms: u32 = 0;
+
+    // 9. PCM drain + event monitoring loop.
     // `writer` isn't Send so we can't move it into a spawned task —
     // everything runs in the same task, woken by `tokio::select!`.
     loop {
@@ -170,6 +227,10 @@ async fn run_spotify_playback(
             player.stop();
             break;
         }
+
+        // Register the notify future BEFORE draining so we don't miss
+        // notifications that fire between the last try_recv and select!.
+        let notified = pcm_notify.notified();
 
         // Drain all available PCM frames (non-blocking).
         loop {
@@ -187,7 +248,7 @@ async fn run_spotify_playback(
 
         // Wait for the next wake-up: PCM data, player event, or stop check.
         tokio::select! {
-            _ = pcm_notify.notified() => {
+            _ = notified => {
                 // PCM data available — loop back to drain.
             }
             event = player_events.recv() => {
@@ -195,6 +256,12 @@ async fn run_spotify_playback(
                     Some(event) => {
                         handle_player_event(&event, event_tx, uri_str).await;
                         match event {
+                            PlayerEvent::Playing { position_ms, .. } => {
+                                last_position_ms = position_ms;
+                            }
+                            PlayerEvent::Paused { position_ms, .. } => {
+                                last_position_ms = position_ms;
+                            }
                             PlayerEvent::EndOfTrack { .. } => {
                                 info!("spotify: end of track");
                                 break;
@@ -204,11 +271,32 @@ async fn run_spotify_playback(
                                 break;
                             }
                             PlayerEvent::Unavailable { .. } => {
-                                warn!("spotify: track unavailable");
+                                let catalogue = session
+                                    .user_data()
+                                    .attributes
+                                    .get("type")
+                                    .cloned()
+                                    .unwrap_or_default();
+                                let (error, error_code) = if catalogue != "premium" {
+                                    warn!("spotify: track unavailable (non-premium account)");
+                                    (
+                                        "Spotify Premium is required for playback. \
+                                         Visit spotify.com/premium to upgrade."
+                                            .to_string(),
+                                        Some("premium_required".into()),
+                                    )
+                                } else {
+                                    warn!("spotify: track unavailable");
+                                    (
+                                        format!("track unavailable: {uri_str}"),
+                                        None,
+                                    )
+                                };
                                 let _ = event_tx
                                     .send(Event::SourceError {
                                         source: "spotify".into(),
-                                        error: format!("track unavailable: {uri_str}"),
+                                        error,
+                                        error_code,
                                     })
                                     .await;
                                 break;
@@ -221,13 +309,17 @@ async fn run_spotify_playback(
                                         .send(Event::SourceError {
                                             source: "spotify".into(),
                                             error: format!("session lost: {e}"),
+                                            error_code: None,
                                         })
                                         .await;
                                     break;
                                 }
-                                info!("spotify: reconnected, reloading track");
+                                info!(
+                                    position_ms = last_position_ms,
+                                    "spotify: reconnected, resuming track"
+                                );
                                 match SpotifyUri::from_uri(uri_str) {
-                                    Ok(uri) => player.load(uri, true, 0),
+                                    Ok(uri) => player.load(uri, true, last_position_ms),
                                     Err(e) => {
                                         error!(error = %e, "spotify: failed to re-parse URI after reconnect");
                                         break;
@@ -275,6 +367,11 @@ async fn handle_player_event(
 
             let title = sanitize(&audio_item.name);
 
+            // Covers are pre-sorted largest-first by librespot; pick the
+            // first URL if present. `CoverImage.url` is already a fully-formed
+            // CDN URL, so no additional processing is needed.
+            let art_url = audio_item.covers.first().map(|c| sanitize(&c.url));
+
             let _ = event_tx
                 .send(Event::NowPlayingChanged {
                     artist,
@@ -282,6 +379,7 @@ async fn handle_player_event(
                     album,
                     station: None,
                     raw_stream_title: Some(sanitize(uri)),
+                    art_url,
                 })
                 .await;
 
@@ -313,14 +411,22 @@ async fn attempt_reconnect(session: &Session, cred_path: &std::path::Path) -> Re
         info!(attempt = i + 1, "spotify: reconnect attempt");
         tokio::time::sleep(*delay).await;
 
-        // Re-load credentials (they may have been refreshed).
-        let credentials = match auth::load_or_authenticate(cred_path) {
-            Ok(c) => c,
-            Err(e) => {
-                warn!(error = %e, "spotify: credential reload failed during reconnect");
-                continue;
-            }
-        };
+        // Re-load credentials on a blocking thread (daemon-safe, no interactive auth).
+        let cred_path_owned = cred_path.to_path_buf();
+        let credentials =
+            match tokio::task::spawn_blocking(move || auth::load_credentials(&cred_path_owned))
+                .await
+            {
+                Ok(Ok(auth_result)) => auth_result.credentials,
+                Ok(Err(e)) => {
+                    warn!(error = %e, "spotify: credential reload failed during reconnect");
+                    continue;
+                }
+                Err(e) => {
+                    warn!(error = %e, "spotify: credential task panicked during reconnect");
+                    continue;
+                }
+            };
 
         match session.connect(credentials, false).await {
             Ok(()) => return Ok(()),
@@ -349,6 +455,7 @@ mod tests {
             "spotify:track:test".into(),
             PathBuf::from("/tmp/test-creds.json"),
             tx,
+            48_000,
         );
         assert_eq!(source.name(), "spotify");
     }
@@ -394,7 +501,7 @@ mod tests {
 
     #[test]
     fn sink_channel_produces_notify() {
-        let (_sink, _rx, notify) = sink::channel();
+        let (_sink, _rx, notify) = sink::channel(48_000);
         // Verify the notify is functional (doesn't panic).
         notify.notify_one();
     }
@@ -405,7 +512,7 @@ mod tests {
         use librespot_playback::convert::Converter;
         use librespot_playback::decoder::AudioPacket;
 
-        let (mut sink_inst, _rx, notify) = sink::channel();
+        let (mut sink_inst, _rx, notify) = sink::channel(48_000);
         sink_inst.start().expect("start should succeed");
 
         // Send enough data to fill at least one chunk.
@@ -429,11 +536,13 @@ mod tests {
             "spotify:track:4PTG3Z6ehGkBFwjybzWkR8".into(),
             PathBuf::from("/home/user/.config/clitunes/spotify-creds.json"),
             tx,
+            48_000,
         );
         assert_eq!(source.uri, "spotify:track:4PTG3Z6ehGkBFwjybzWkR8");
         assert_eq!(
             source.credentials_path,
             PathBuf::from("/home/user/.config/clitunes/spotify-creds.json")
         );
+        assert_eq!(source.target_sample_rate, 48_000);
     }
 }

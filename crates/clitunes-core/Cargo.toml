@@ -12,3 +12,6 @@ description = "clitunes core types — pure, no I/O, no feature gates."
 [dependencies]
 serde.workspace = true
 thiserror.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true

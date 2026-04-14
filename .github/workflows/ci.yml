@@ -72,6 +72,15 @@ jobs:
             exit 1
           fi
           echo "D15 holds — clitunesd has no wgpu/ratatui/crossterm in its dep graph."
+      - name: Assert image crate excluded from daemon (D15 — album-art is client-only)
+        run: |
+          set -euo pipefail
+          if cargo tree -p clitunesd | grep -qE '^[| ]*image v'; then
+            echo "::error::D15 violated: image crate found in clitunesd dep graph"
+            cargo tree -p clitunesd | grep -E 'image v'
+            exit 1
+          fi
+          echo "D15 holds — image crate excluded from daemon."
       - name: Assert librespot excluded from non-spotify builds
         run: |
           set -euo pipefail

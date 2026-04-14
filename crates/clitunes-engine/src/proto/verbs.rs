@@ -1,3 +1,4 @@
+use clitunes_core::LibraryCategory;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -14,16 +15,45 @@ pub enum Verb {
     Pause,
     Next,
     Prev,
-    Volume { level: u8 },
+    Volume {
+        level: u8,
+    },
     Source(SourceArg),
-    Viz { name: String },
-    Layout { name: String },
+    Viz {
+        name: String,
+    },
+    Layout {
+        name: String,
+    },
     Picker,
     Status,
-    Subscribe { topic: String },
-    Unsubscribe { topic: String },
+    Subscribe {
+        topic: String,
+    },
+    Unsubscribe {
+        topic: String,
+    },
     Quit,
     Capabilities,
+    /// Search the active content provider (currently Spotify Web API).
+    Search {
+        query: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        limit: Option<u32>,
+    },
+    /// Fetch a slice of the user's saved library (tracks, albums, playlists,
+    /// recently-played) from the active content provider.
+    BrowseLibrary {
+        category: LibraryCategory,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        limit: Option<u32>,
+    },
+    /// Fetch the tracks of a specific playlist by provider-specific id/uri.
+    BrowsePlaylist {
+        id: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        limit: Option<u32>,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -143,5 +173,66 @@ mod tests {
     fn unknown_verb_fails_parse() {
         let line = r#"{"cmd_id":"x","verb":"explode"}"#;
         assert!(VerbEnvelope::from_line(line).is_err());
+    }
+
+    #[test]
+    fn search_roundtrip_with_limit() {
+        let env = VerbEnvelope {
+            cmd_id: "q-1".into(),
+            verb: Verb::Search {
+                query: "bohemian rhapsody".into(),
+                limit: Some(25),
+            },
+        };
+        let line = env.to_line();
+        assert!(line.contains("bohemian"));
+        assert!(line.contains("25"));
+        let parsed = VerbEnvelope::from_line(&line).unwrap();
+        assert_eq!(parsed, env);
+    }
+
+    #[test]
+    fn search_roundtrip_no_limit() {
+        let env = VerbEnvelope {
+            cmd_id: "q-2".into(),
+            verb: Verb::Search {
+                query: "daft punk".into(),
+                limit: None,
+            },
+        };
+        let line = env.to_line();
+        // `limit` should be omitted when None.
+        assert!(!line.contains("limit"));
+        let parsed = VerbEnvelope::from_line(&line).unwrap();
+        assert_eq!(parsed, env);
+    }
+
+    #[test]
+    fn browse_library_roundtrip() {
+        let env = VerbEnvelope {
+            cmd_id: "b-1".into(),
+            verb: Verb::BrowseLibrary {
+                category: LibraryCategory::SavedTracks,
+                limit: Some(50),
+            },
+        };
+        let line = env.to_line();
+        assert!(line.contains("saved_tracks"));
+        let parsed = VerbEnvelope::from_line(&line).unwrap();
+        assert_eq!(parsed, env);
+    }
+
+    #[test]
+    fn browse_playlist_roundtrip() {
+        let env = VerbEnvelope {
+            cmd_id: "p-1".into(),
+            verb: Verb::BrowsePlaylist {
+                id: "spotify:playlist:37i9dQZF1DXcBWIGoYBM5M".into(),
+                limit: None,
+            },
+        };
+        let line = env.to_line();
+        let parsed = VerbEnvelope::from_line(&line).unwrap();
+        assert_eq!(parsed, env);
     }
 }

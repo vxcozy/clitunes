@@ -95,6 +95,7 @@ async fn subscribe_and_receive_broadcast_event() {
         album: None,
         station: None,
         raw_stream_title: None,
+        art_url: None,
     };
     event_tx.send(event.clone()).await.unwrap();
 
@@ -123,6 +124,7 @@ async fn unsubscribed_client_does_not_receive_event() {
         album: None,
         station: None,
         raw_stream_title: None,
+        art_url: None,
     };
     event_tx.send(event).await.unwrap();
 
@@ -275,6 +277,7 @@ async fn multiple_clients_all_receive_broadcast() {
         album: None,
         station: None,
         raw_stream_title: None,
+        art_url: None,
     };
     event_tx.send(event.clone()).await.unwrap();
 

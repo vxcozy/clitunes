@@ -34,7 +34,10 @@ pub mod state;
 
 pub use curated_seed::{load_curated, CuratedList, CuratedLoadOutcome, CURATED_SLOT_COUNT};
 pub use paint::{paint_picker, Rect};
-pub use state::{key_from_bytes, PickerAction, PickerKey, PickerState};
+pub use state::{
+    key_from_bytes, LibraryView, PickerAction, PickerKey, PickerState, PickerTab,
+    LIBRARY_CATEGORIES,
+};
 
 use crate::tui::transition::easing;
 use crate::tui::transition::{Transition, TransitionMode};

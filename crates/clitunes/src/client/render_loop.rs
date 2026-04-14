@@ -6,15 +6,16 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
-use clitunes_core::StereoFrame;
+use clitunes_core::{LibraryCategory, StereoFrame};
 use clitunes_engine::audio::FftTap;
 use clitunes_engine::pcm::cross_process_api::PcmConsumer;
 use clitunes_engine::proto::events::Event;
-use clitunes_engine::proto::verbs::Verb;
+use clitunes_engine::proto::verbs::{SourceArg, Verb};
+use clitunes_engine::tui::album_art::AlbumArtState;
 use clitunes_engine::tui::micro::{BreathingAnimation, ErrorPulse, QuitFade, VolumeOverlay};
 use clitunes_engine::tui::picker::{
     key_from_bytes, load_curated, paint_picker, CuratedList, CuratedLoadOutcome, PickerAction,
-    PickerKey, PickerState, PickerTransition,
+    PickerKey, PickerState, PickerTab, PickerTransition,
 };
 use clitunes_engine::tui::theme::Theme;
 
@@ -39,6 +40,10 @@ const FALLBACK_ROWS: u16 = 24;
 /// Longest ANSI escape sequence we recognise (ESC [ A = 3 bytes).
 /// Any pending buffer longer than this can't be a valid escape.
 const MAX_ESCAPE_LEN: usize = 3;
+/// Debounce window between a Search query edit and the outgoing
+/// `Verb::Search`. 300 ms is short enough that users don't notice the
+/// gap but long enough to coalesce fast typing into a single request.
+const SEARCH_DEBOUNCE: Duration = Duration::from_millis(300);
 
 enum AppKey {
     Picker(PickerKey),
@@ -74,6 +79,12 @@ struct AppState {
     quit_fade: QuitFade,
     breathing: BreathingAnimation,
     frame_idx: u64,
+    /// Pending debounced search query. Cleared after the `Verb::Search`
+    /// is actually dispatched. Holds `(query, dirty_at)`.
+    pending_search: Option<(String, Instant)>,
+    /// Album art state. Updated from `NowPlayingChanged.art_url`;
+    /// painted in the top-right of the grid when a cover is loaded.
+    album_art: AlbumArtState,
 }
 
 impl AppState {
@@ -108,6 +119,8 @@ impl AppState {
             quit_fade: QuitFade::default(),
             breathing: BreathingAnimation::default(),
             frame_idx: 0,
+            pending_search: None,
+            album_art: AlbumArtState::new(),
         }
     }
 
@@ -163,16 +176,50 @@ impl AppState {
             Event::VolumeChanged { volume } => {
                 self.volume_overlay.show(*volume);
             }
-            Event::SourceError { error, .. } => {
+            Event::NowPlayingChanged { art_url, .. } => match art_url {
+                Some(url) => self.album_art.request(url),
+                None => self.album_art.clear(),
+            },
+            Event::SourceError {
+                error, error_code, ..
+            } => {
                 tracing::warn!(target: "clitunes", %error, "source error from daemon");
-                self.error_pulse.trigger(format!("Source error: {error}"));
-                self.picker_state.banner =
-                    Some(format!("Source error — pick another station. ({error})"));
+                let (pulse_msg, banner_msg) = if error_code.as_deref() == Some("premium_required") {
+                    (
+                        "Spotify Premium is required for playback".into(),
+                        "Spotify Premium required — visit spotify.com/premium".into(),
+                    )
+                } else {
+                    (
+                        format!("Source error: {error}"),
+                        format!("Source error — pick another station. ({error})"),
+                    )
+                };
+                self.error_pulse.trigger(pulse_msg);
+                self.picker_state.banner = Some(banner_msg);
                 self.picker_state.show();
             }
             Event::DaemonShuttingDown { reason } => {
                 tracing::info!(target: "clitunes", %reason, "daemon shutting down");
                 stop.store(true, Ordering::SeqCst);
+            }
+            Event::SearchResults { query, items, .. } => {
+                // Ignore stale results — user has moved on.
+                if *query == self.picker_state.search_query {
+                    self.picker_state.set_search_results(items.clone());
+                }
+            }
+            Event::LibraryResults {
+                category, items, ..
+            } => {
+                self.picker_state
+                    .set_library_items(*category, items.clone());
+            }
+            Event::PlaylistResults { items, .. } => {
+                // Playlists drill-in: show the playlist's tracks in the
+                // Library items view under the Playlists category.
+                self.picker_state
+                    .set_library_items(LibraryCategory::Playlists, items.clone());
             }
             _ => {}
         }
@@ -184,6 +231,23 @@ impl AppState {
         if self.quit_fade.is_input_blocked() {
             return false;
         }
+        // `n`/`p` as viz nav collide with typing into the Search tab.
+        // When the Search tab has focus, the `Char` goes to the picker;
+        // otherwise we translate them back into viz-nav events.
+        let key = match key {
+            AppKey::Picker(PickerKey::Char(c))
+                if (c == 'n' || c == 'N' || c == 'p' || c == 'P')
+                    && (!self.picker_state.visible
+                        || self.picker_state.active_tab != PickerTab::Search) =>
+            {
+                if c == 'n' || c == 'N' {
+                    AppKey::VizNext
+                } else {
+                    AppKey::VizPrev
+                }
+            }
+            other => other,
+        };
         match key {
             AppKey::Picker(pk) => {
                 let was_visible = self.picker_state.visible;
@@ -219,6 +283,57 @@ impl AppState {
                                     "picker: station URL is not a radiobrowser: URI"
                                 );
                             }
+                        }
+                    }
+                    PickerAction::PickSpotify(uri) => {
+                        self.picker_state.hide();
+                        self.picker_transition = PickerTransition::start_fade_out();
+                        tracing::info!(
+                            target: "clitunes",
+                            %uri,
+                            "picker: spotify item selected"
+                        );
+                        if let Err(e) = verb_tx.try_send(Verb::Source(SourceArg::Spotify { uri })) {
+                            tracing::error!(
+                                target: "clitunes",
+                                error = %e,
+                                "picker: failed to send spotify source verb"
+                            );
+                        }
+                    }
+                    PickerAction::SearchDirty(query) => {
+                        if query.trim().is_empty() {
+                            // Clear any in-flight search and wipe results.
+                            self.pending_search = None;
+                            self.picker_state.set_search_results(Vec::new());
+                        } else {
+                            self.pending_search = Some((query, Instant::now()));
+                        }
+                    }
+                    PickerAction::BrowseLibrary(category) => {
+                        if let Err(e) = verb_tx.try_send(Verb::BrowseLibrary {
+                            category,
+                            limit: None,
+                        }) {
+                            tracing::error!(
+                                target: "clitunes",
+                                error = %e,
+                                ?category,
+                                "picker: failed to send browse_library verb"
+                            );
+                        }
+                    }
+                    PickerAction::BrowsePlaylist(id) => {
+                        if let Err(e) = verb_tx.try_send(Verb::BrowsePlaylist {
+                            id: id.clone(),
+                            limit: None,
+                        }) {
+                            tracing::error!(
+                                target: "clitunes",
+                                error = %e,
+                                %id,
+                                "picker: failed to send browse_playlist verb"
+                            );
                         }
                     }
                     PickerAction::Quit => {
@@ -336,6 +451,25 @@ impl RenderLoop {
                 }
             }
 
+            // Flush any debounced search query whose window has elapsed.
+            if let Some((query, dirty_at)) = state.pending_search.as_ref() {
+                if dirty_at.elapsed() >= SEARCH_DEBOUNCE {
+                    let query = query.clone();
+                    state.pending_search = None;
+                    if let Err(e) = self.verb_tx.try_send(Verb::Search {
+                        query: query.clone(),
+                        limit: None,
+                    }) {
+                        tracing::error!(
+                            target: "clitunes",
+                            error = %e,
+                            %query,
+                            "picker: failed to send search verb"
+                        );
+                    }
+                }
+            }
+
             // Check for terminal resize.
             let (new_w, new_h) = visualiser_cell_rect();
             if state.maybe_resize(new_w, new_h) {
@@ -366,6 +500,20 @@ impl RenderLoop {
             // Apply state transitions (source switch, viz switch, play/pause, first launch).
             state.transition_ctrl.apply(&mut state.grid);
 
+            // Album art: drain any completed fetch, then paint into the
+            // top-right corner (below any picker overlay). 20×10 cells
+            // at roughly a 2:1 cell aspect ratio gives a near-square
+            // cover. Skipped for tiny terminals.
+            state.album_art.poll_ready();
+            const ART_W: u16 = 20;
+            const ART_H: u16 = 10;
+            const ART_PAD: u16 = 1;
+            if cells_w >= ART_W + ART_PAD * 2 && cells_h >= ART_H + ART_PAD * 2 {
+                let x0 = cells_w - ART_W - ART_PAD;
+                let y0 = ART_PAD;
+                state.album_art.paint(&mut state.grid, x0, y0, ART_W, ART_H);
+            }
+
             // Picker overlay with fade transitions.
             if state
                 .picker_transition
@@ -376,7 +524,7 @@ impl RenderLoop {
                 let _ = paint_picker(
                     &mut state.grid,
                     &state.curated,
-                    state.picker_state.selected,
+                    &state.picker_state,
                     &state.theme,
                 );
 
@@ -527,6 +675,10 @@ fn spawn_keypress_thread(stop: Arc<AtomicBool>, tx: std::sync::mpsc::Sender<AppK
 }
 
 fn classify_pending(pending: &[u8]) -> Option<AppKey> {
+    // `n`/`p` used to be viz-nav shortcuts here, but that stole the
+    // letters from anyone trying to type them on the Search tab. They
+    // now flow through as `PickerKey::Char` — `AppState::handle_key`
+    // translates them to viz-nav when the picker isn't typing.
     match pending {
         [0x1b] => None,
         [0x1b, b'['] => None,
@@ -538,8 +690,6 @@ fn classify_pending(pending: &[u8]) -> Option<AppKey> {
                 Some(AppKey::Picker(k))
             }
         }
-        [b'n'] | [b'N'] => Some(AppKey::VizNext),
-        [b'p'] | [b'P'] => Some(AppKey::VizPrev),
         single if single.len() == 1 => {
             let k = key_from_bytes(single);
             if k == PickerKey::Other {

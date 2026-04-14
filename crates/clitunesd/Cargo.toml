@@ -22,6 +22,7 @@ clitunes-engine = { path = "../clitunes-engine", default-features = false, featu
     "decode",
     "local",
     "spotify",
+    "webapi",
     "control",
     "daemon",
 ] }

@@ -151,6 +151,10 @@ impl DaemonEventLoop {
         let verb_stop = Arc::clone(&self.stop);
         let verb_ev_tx = event_tx.clone();
         let verb_last_state = Arc::clone(&last_state);
+        #[cfg(feature = "webapi")]
+        let webapi_cache = Arc::new(WebApiCache::new());
+        #[cfg(feature = "webapi")]
+        let verb_webapi = Arc::clone(&webapi_cache);
         tokio::spawn(async move {
             dispatch_verbs(
                 &mut verb_rx,
@@ -159,6 +163,8 @@ impl DaemonEventLoop {
                 &pcm_tap,
                 &verb_stop,
                 &verb_last_state,
+                #[cfg(feature = "webapi")]
+                &verb_webapi,
             )
             .await;
         });
@@ -297,6 +303,7 @@ fn run_source_pipeline(
                         let _ = event_tx.blocking_send(Event::SourceError {
                             source: "radio".into(),
                             error: e.to_string(),
+                            error_code: None,
                         });
                         current = SourceKind::Tone;
                         continue;
@@ -324,6 +331,7 @@ fn run_source_pipeline(
                     let _ = event_tx.blocking_send(Event::SourceError {
                         source: "local".into(),
                         error: e.to_string(),
+                        error_code: None,
                     });
                     current = SourceKind::Tone;
                     continue;
@@ -335,7 +343,12 @@ fn run_source_pipeline(
                     crate::sources::spotify::default_credentials_path().unwrap_or_else(|| {
                         std::path::PathBuf::from("/tmp/clitunes-spotify-creds.json")
                     });
-                let mut spotify = SpotifySource::new(uri.clone(), cred_path, event_tx.clone());
+                let mut spotify = SpotifySource::new(
+                    uri.clone(),
+                    cred_path,
+                    event_tx.clone(),
+                    format.sample_rate,
+                );
                 send_state(Event::StateChanged {
                     state: PlayState::Playing,
                     source: Some("spotify".into()),
@@ -382,6 +395,7 @@ async fn dispatch_verbs(
     pcm_tap: &Event,
     stop: &Arc<AtomicBool>,
     last_state: &Arc<Mutex<Option<Event>>>,
+    #[cfg(feature = "webapi")] webapi_cache: &Arc<WebApiCache>,
 ) {
     while let Some((envelope, reply_tx)) = verb_rx.recv().await {
         if stop.load(Ordering::Relaxed) {
@@ -522,6 +536,417 @@ async fn dispatch_verbs(
             }
             Verb::Quit | Verb::Subscribe { .. } | Verb::Unsubscribe { .. } | Verb::Capabilities => {
             }
+            #[cfg(feature = "webapi")]
+            Verb::Search { query, limit } => {
+                dispatch_search(query, *limit, cmd_id, event_tx, &reply_tx, webapi_cache).await;
+            }
+            #[cfg(feature = "webapi")]
+            Verb::BrowseLibrary { category, limit } => {
+                dispatch_browse_library(
+                    *category,
+                    *limit,
+                    cmd_id,
+                    event_tx,
+                    &reply_tx,
+                    webapi_cache,
+                )
+                .await;
+            }
+            #[cfg(feature = "webapi")]
+            Verb::BrowsePlaylist { id, limit } => {
+                dispatch_browse_playlist(id, *limit, cmd_id, event_tx, &reply_tx, webapi_cache)
+                    .await;
+            }
+            #[cfg(not(feature = "webapi"))]
+            Verb::Search { .. } | Verb::BrowseLibrary { .. } | Verb::BrowsePlaylist { .. } => {
+                let _ = reply_tx.try_send(Event::command_err(
+                    cmd_id,
+                    "browse/search not enabled in this build",
+                ));
+            }
         }
+    }
+}
+
+/// Lazy cache for the daemon-side [`SpotifyWebApi`] client.
+///
+/// rspotify's `AuthCodePkceSpotify` owns its own token and refreshes it
+/// internally on 401 responses, so we only need to build the client
+/// once — on the first verb that needs it. Subsequent verbs share the
+/// same `Arc<SpotifyWebApi>` (the underlying reqwest connection pool
+/// and the in-memory token state come with it).
+///
+/// When an API call returns an error that indicates a terminal auth
+/// failure ([`is_auth_shaped`] returns true) the dispatcher calls
+/// [`WebApiCache::invalidate`] so the next verb rebuilds from disk.
+/// rspotify handles transient 401s itself via the cached refresh
+/// token; we only evict on hard failures.
+///
+/// # Concurrency model
+///
+/// [`get`](Self::get) holds a `tokio::sync::Mutex` across the first
+/// build's `.await`. This is load-bearing: it guarantees that parallel
+/// callers on an empty cache coalesce into a single build rather than
+/// each running their own. Today the daemon dispatches verbs serially
+/// via `while let Some(..) = verb_rx.recv().await`, so the lock never
+/// has contention in practice — but if verb dispatch is ever
+/// parallelised, this pattern still produces the correct result (one
+/// build, N readers) without adding a separate build-barrier.
+#[cfg(feature = "webapi")]
+pub(crate) struct WebApiCache {
+    client: tokio::sync::Mutex<Option<Arc<crate::sources::spotify::webapi::SpotifyWebApi>>>,
+}
+
+#[cfg(feature = "webapi")]
+impl WebApiCache {
+    pub(crate) fn new() -> Self {
+        Self {
+            client: tokio::sync::Mutex::new(None),
+        }
+    }
+
+    /// Return the cached client, building it on first demand. The build
+    /// step reads `credentials.json` on the blocking pool and does an
+    /// OAuth refresh, so it isn't free — but it runs at most once per
+    /// daemon lifetime (unless `invalidate` is called).
+    pub(crate) async fn get(&self) -> Result<Arc<crate::sources::spotify::webapi::SpotifyWebApi>> {
+        let mut guard = self.client.lock().await;
+        if let Some(existing) = guard.as_ref() {
+            return Ok(Arc::clone(existing));
+        }
+        let api = Arc::new(build_webapi().await?);
+        *guard = Some(Arc::clone(&api));
+        Ok(api)
+    }
+
+    /// Drop the cached client. The next call to [`WebApiCache::get`]
+    /// will rebuild from disk. Call this when an API error indicates
+    /// the cached token/client state is no longer recoverable.
+    pub(crate) async fn invalidate(&self) {
+        *self.client.lock().await = None;
+    }
+
+    /// Test-only: seed the cache with a pre-built client so invalidation
+    /// behaviour can be asserted without building a real rspotify client.
+    #[cfg(test)]
+    pub(crate) async fn seed_for_test(
+        &self,
+        api: Arc<crate::sources::spotify::webapi::SpotifyWebApi>,
+    ) {
+        *self.client.lock().await = Some(api);
+    }
+
+    /// Test-only: whether the cache currently holds a client. Used to
+    /// assert the effect of [`invalidate`](Self::invalidate).
+    #[cfg(test)]
+    pub(crate) async fn is_cached(&self) -> bool {
+        self.client.lock().await.is_some()
+    }
+}
+
+/// Load the cached OAuth credentials from disk and build a fresh
+/// [`SpotifyWebApi`] client. The filesystem read + token refresh run
+/// on a blocking pool so the dispatcher doesn't stall while the daemon
+/// is I/O bound. Called at most once per `WebApiCache` lifetime unless
+/// invalidated by a hard auth failure.
+#[cfg(feature = "webapi")]
+async fn build_webapi() -> Result<crate::sources::spotify::webapi::SpotifyWebApi> {
+    use crate::sources::spotify::{self, token::SharedTokenProvider, webapi::SpotifyWebApi};
+    let cred_path = spotify::default_credentials_path()
+        .context("resolve spotify credentials path (set $HOME?)")?;
+    let cred_path_clone = cred_path.clone();
+    let auth_result =
+        tokio::task::spawn_blocking(move || spotify::load_credentials(&cred_path_clone))
+            .await
+            .context("credential task panicked")?
+            .context("load spotify credentials")?;
+    let provider = SharedTokenProvider::new(auth_result.token, cred_path);
+    Ok(SpotifyWebApi::from_provider(&provider))
+}
+
+/// Does an HTTP status code indicate a terminal auth failure? Exposed
+/// as a standalone function so it is unit-testable without constructing
+/// a real `reqwest::Response`.
+#[cfg(feature = "webapi")]
+fn is_auth_status(status: u16) -> bool {
+    matches!(status, 401 | 403)
+}
+
+/// Does this error indicate a terminal auth failure that should evict
+/// the cached client?
+///
+/// Walks the `anyhow::Error` chain for an [`rspotify::ClientError`] and
+/// matches on structured variants:
+/// - `InvalidToken` — rspotify rejected the token before sending
+/// - `Http(StatusCode(resp))` with `resp.status()` 401 or 403
+///
+/// Errors that never reached rspotify (our own credential-cache failures
+/// from [`build_webapi`]) are matched on their typed context strings —
+/// still not a raw string search of the whole chain, but narrow enough
+/// that a log-format change upstream can't silently break invalidation.
+#[cfg(feature = "webapi")]
+fn is_auth_shaped(err: &anyhow::Error) -> bool {
+    for cause in err.chain() {
+        if let Some(client_err) = cause.downcast_ref::<rspotify::ClientError>() {
+            return match client_err {
+                rspotify::ClientError::InvalidToken => true,
+                rspotify::ClientError::Http(http) => match http.as_ref() {
+                    rspotify::http::HttpError::StatusCode(resp) => {
+                        is_auth_status(resp.status().as_u16())
+                    }
+                    _ => false,
+                },
+                _ => false,
+            };
+        }
+    }
+
+    // Not an rspotify error. `build_webapi` attaches one of two typed
+    // context strings when the on-disk credential cache is unusable;
+    // either is an auth failure from our perspective. We only look at
+    // the outermost error's top-level message so an unrelated cause
+    // anywhere deeper in the chain can't flip the decision.
+    let outer = err.to_string();
+    outer == "load spotify credentials" || outer == "resolve spotify credentials path (set $HOME?)"
+}
+
+/// Map any auth/webapi error to a `CommandResult { ok: false, .. }`.
+/// Keeps dispatch handlers terse.
+#[cfg(feature = "webapi")]
+fn webapi_err(cmd_id: &str, context: &str, err: anyhow::Error) -> Event {
+    tracing::warn!(
+        target: "clitunesd",
+        error = %err,
+        context,
+        "spotify webapi call failed"
+    );
+    Event::command_err(cmd_id, format!("{context}: {err}"))
+}
+
+#[cfg(feature = "webapi")]
+async fn dispatch_search(
+    query: &str,
+    limit: Option<u32>,
+    cmd_id: &str,
+    event_tx: &mpsc::Sender<Event>,
+    reply_tx: &mpsc::Sender<Event>,
+    webapi_cache: &Arc<WebApiCache>,
+) {
+    let api = match webapi_cache.get().await {
+        Ok(api) => api,
+        Err(e) => {
+            if is_auth_shaped(&e) {
+                webapi_cache.invalidate().await;
+            }
+            let _ = reply_tx.try_send(webapi_err(cmd_id, "spotify auth", e));
+            return;
+        }
+    };
+    match api.search(query, limit).await {
+        Ok((items, total)) => {
+            let _ = event_tx
+                .send(Event::SearchResults {
+                    query: query.to_string(),
+                    items,
+                    total,
+                })
+                .await;
+            let _ = reply_tx.try_send(Event::command_ok(cmd_id));
+        }
+        Err(e) => {
+            if is_auth_shaped(&e) {
+                webapi_cache.invalidate().await;
+            }
+            let _ = reply_tx.try_send(webapi_err(cmd_id, "spotify search", e));
+        }
+    }
+}
+
+#[cfg(feature = "webapi")]
+async fn dispatch_browse_library(
+    category: clitunes_core::LibraryCategory,
+    limit: Option<u32>,
+    cmd_id: &str,
+    event_tx: &mpsc::Sender<Event>,
+    reply_tx: &mpsc::Sender<Event>,
+    webapi_cache: &Arc<WebApiCache>,
+) {
+    use clitunes_core::LibraryCategory;
+    let api = match webapi_cache.get().await {
+        Ok(api) => api,
+        Err(e) => {
+            if is_auth_shaped(&e) {
+                webapi_cache.invalidate().await;
+            }
+            let _ = reply_tx.try_send(webapi_err(cmd_id, "spotify auth", e));
+            return;
+        }
+    };
+    let result = match category {
+        LibraryCategory::SavedTracks => api.saved_tracks(limit).await,
+        LibraryCategory::SavedAlbums => api.saved_albums(limit).await,
+        LibraryCategory::Playlists => api.playlists(limit).await,
+        LibraryCategory::RecentlyPlayed => api.recently_played(limit).await,
+    };
+    match result {
+        Ok((items, total)) => {
+            let _ = event_tx
+                .send(Event::LibraryResults {
+                    category,
+                    items,
+                    total,
+                })
+                .await;
+            let _ = reply_tx.try_send(Event::command_ok(cmd_id));
+        }
+        Err(e) => {
+            if is_auth_shaped(&e) {
+                webapi_cache.invalidate().await;
+            }
+            let _ = reply_tx.try_send(webapi_err(cmd_id, "spotify library", e));
+        }
+    }
+}
+
+#[cfg(feature = "webapi")]
+async fn dispatch_browse_playlist(
+    id: &str,
+    limit: Option<u32>,
+    cmd_id: &str,
+    event_tx: &mpsc::Sender<Event>,
+    reply_tx: &mpsc::Sender<Event>,
+    webapi_cache: &Arc<WebApiCache>,
+) {
+    let api = match webapi_cache.get().await {
+        Ok(api) => api,
+        Err(e) => {
+            if is_auth_shaped(&e) {
+                webapi_cache.invalidate().await;
+            }
+            let _ = reply_tx.try_send(webapi_err(cmd_id, "spotify auth", e));
+            return;
+        }
+    };
+    match api.playlist_tracks(id, limit).await {
+        Ok((name, items, total)) => {
+            let _ = event_tx
+                .send(Event::PlaylistResults {
+                    playlist_id: id.to_string(),
+                    playlist_name: Some(name),
+                    items,
+                    total,
+                })
+                .await;
+            let _ = reply_tx.try_send(Event::command_ok(cmd_id));
+        }
+        Err(e) => {
+            if is_auth_shaped(&e) {
+                webapi_cache.invalidate().await;
+            }
+            let _ = reply_tx.try_send(webapi_err(cmd_id, "spotify playlist", e));
+        }
+    }
+}
+
+#[cfg(test)]
+#[cfg(feature = "webapi")]
+mod webapi_cache_tests {
+    use super::*;
+    use anyhow::anyhow;
+
+    #[test]
+    fn is_auth_status_matches_401_and_403_only() {
+        assert!(is_auth_status(401));
+        assert!(is_auth_status(403));
+        assert!(!is_auth_status(400));
+        assert!(!is_auth_status(404));
+        assert!(!is_auth_status(429));
+        assert!(!is_auth_status(500));
+        assert!(!is_auth_status(503));
+    }
+
+    #[test]
+    fn is_auth_shaped_matches_rspotify_invalid_token() {
+        // Structured variant — the dispatcher should evict on this.
+        let err: anyhow::Error =
+            anyhow::Error::from(rspotify::ClientError::InvalidToken).context("spotify search");
+        assert!(is_auth_shaped(&err));
+    }
+
+    #[test]
+    fn is_auth_shaped_matches_our_credential_load_failure() {
+        // `build_webapi` attaches this exact context on load_credentials
+        // failure — matches the current `.context(...)` call sites.
+        let err: anyhow::Error =
+            anyhow!("no cached Spotify credentials").context("load spotify credentials");
+        assert!(is_auth_shaped(&err));
+
+        let err: anyhow::Error = anyhow!("dirs::config_dir returned None")
+            .context("resolve spotify credentials path (set $HOME?)");
+        assert!(is_auth_shaped(&err));
+    }
+
+    #[test]
+    fn is_auth_shaped_rejects_transient_and_unrelated_errors() {
+        // Plain messages that *used* to match the old string heuristic
+        // no longer do — we only trust structured evidence now.
+        assert!(!is_auth_shaped(&anyhow!("connection reset")));
+        assert!(!is_auth_shaped(&anyhow!("dns lookup failed")));
+        assert!(!is_auth_shaped(&anyhow!("timed out after 10s")));
+        assert!(!is_auth_shaped(&anyhow!("got 500 Internal Server Error")));
+        // A bare string that happens to contain "401" or "unauthorized"
+        // no longer triggers invalidation — it must come through
+        // rspotify or our own typed contexts.
+        assert!(!is_auth_shaped(&anyhow!(
+            "got 401 from some unrelated service"
+        )));
+        // `credential task panicked` is a JoinError wrapper, not an
+        // auth failure.
+        let err: anyhow::Error = anyhow!("runtime shut down").context("credential task panicked");
+        assert!(!is_auth_shaped(&err));
+    }
+
+    /// Build a [`SpotifyWebApi`] with a synthetic token. The client
+    /// won't successfully hit Spotify, but it is real-typed — enough to
+    /// let us test the cache container's seed/invalidate semantics
+    /// without touching the network.
+    fn synthetic_webapi() -> Arc<crate::sources::spotify::webapi::SpotifyWebApi> {
+        use crate::sources::spotify::{token::SharedTokenProvider, webapi::SpotifyWebApi};
+        use librespot_oauth::OAuthToken;
+        use std::time::{Duration, Instant};
+        let token = OAuthToken {
+            access_token: "synthetic".into(),
+            refresh_token: "synthetic".into(),
+            expires_at: Instant::now() + Duration::from_secs(3600),
+            token_type: "Bearer".into(),
+            scopes: vec!["streaming".into()],
+        };
+        let provider = SharedTokenProvider::new(token, "/tmp/ignored".into());
+        Arc::new(SpotifyWebApi::from_provider(&provider))
+    }
+
+    #[tokio::test]
+    async fn invalidate_drops_a_seeded_client() {
+        let cache = WebApiCache::new();
+        assert!(!cache.is_cached().await, "fresh cache should be empty");
+
+        cache.seed_for_test(synthetic_webapi()).await;
+        assert!(cache.is_cached().await, "seed should populate the cache");
+
+        cache.invalidate().await;
+        assert!(
+            !cache.is_cached().await,
+            "invalidate should drop the client"
+        );
+    }
+
+    #[tokio::test]
+    async fn invalidate_on_empty_cache_is_a_noop() {
+        // Regression guard: invalidate must not deadlock or panic when
+        // the cache is already empty.
+        let cache = WebApiCache::new();
+        cache.invalidate().await;
+        cache.invalidate().await;
+        assert!(!cache.is_cached().await);
     }
 }

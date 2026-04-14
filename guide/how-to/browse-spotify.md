@@ -142,3 +142,12 @@ missing scopes and re-authorises.
 Spotify occasionally returns a non-Tracks page even when you ask for
 tracks. clitunes treats that as empty rather than erroring — retry the
 query, or try a slightly different wording.
+
+### HTTP 429 "Too Many Requests" on search/library
+
+The default build shares librespot's embedded OAuth client ID with every
+other librespot-based player, and Spotify rate-limits the combined
+traffic. During peak hours a cold search can 429 immediately. Register
+your own Spotify Developer App and set `$CLITUNES_SPOTIFY_CLIENT_ID` —
+see [Play Spotify tracks → Use your own Spotify Developer App](play-spotify.md#use-your-own-spotify-developer-app-optional)
+for the exact steps.

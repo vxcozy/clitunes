@@ -19,8 +19,46 @@ use serde::{Deserialize, Serialize};
 use tempfile::NamedTempFile;
 use tracing::{info, warn};
 
-/// Spotify's embedded PKCE client ID (same as spotifyd, ncspot, etc.).
-pub(crate) const SPOTIFY_CLIENT_ID: &str = "65b708073fc0480ea92a077233ca87bd";
+/// Shared librespot PKCE client ID — the same one spotifyd, ncspot, and
+/// every other librespot-backed client ship with. Fine for playback, but
+/// **rate-limited across every app that uses it**, so the Web API (search,
+/// library, playlist) routinely serves HTTP 429 on a warm afternoon.
+///
+/// Users who register their own Spotify Developer App and set
+/// `$CLITUNES_SPOTIFY_CLIENT_ID` bypass that shared quota. See
+/// [`spotify_client_id`] for the resolution order.
+pub(crate) const LIBRESPOT_SHARED_CLIENT_ID: &str = "65b708073fc0480ea92a077233ca87bd";
+
+/// Environment variable that overrides the OAuth client_id.
+///
+/// Must come from an app registered on the Spotify Developer dashboard
+/// with redirect URI `http://127.0.0.1:8898/login` (see
+/// [`SPOTIFY_REDIRECT_URI`]). Registering under a different URI will
+/// make the OAuth callback fail.
+pub(crate) const CLIENT_ID_ENV: &str = "CLITUNES_SPOTIFY_CLIENT_ID";
+
+/// Resolve the OAuth client_id: user override via `$CLITUNES_SPOTIFY_CLIENT_ID`
+/// if set (and non-empty), otherwise [`LIBRESPOT_SHARED_CLIENT_ID`].
+///
+/// Read at every OAuth / refresh call. Changing the env var between
+/// auth and refresh will cause refresh to 401 — the caller falls
+/// through to interactive re-auth, which is the expected UX.
+///
+/// # Examples
+///
+/// ```
+/// use clitunes_engine::sources::spotify::auth::spotify_client_id;
+/// # std::env::set_var("CLITUNES_SPOTIFY_CLIENT_ID", "my-developer-app-id");
+/// assert_eq!(spotify_client_id(), "my-developer-app-id");
+/// # std::env::remove_var("CLITUNES_SPOTIFY_CLIENT_ID");
+/// ```
+pub fn spotify_client_id() -> String {
+    std::env::var(CLIENT_ID_ENV)
+        .ok()
+        .map(|s| s.trim().to_owned())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| LIBRESPOT_SHARED_CLIENT_ID.to_owned())
+}
 
 /// Redirect URI registered for the PKCE client. Must use this exact port.
 pub(crate) const SPOTIFY_REDIRECT_URI: &str = "http://127.0.0.1:8898/login";
@@ -266,12 +304,10 @@ fn print_headless_instructions() {
 /// `127.0.0.1:8898` for the redirect callback. When `open_browser`
 /// is true, also opens the auth URL in the default browser.
 fn run_oauth_flow(open_browser: bool) -> Result<OAuthToken, OAuthError> {
-    let mut builder = OAuthClientBuilder::new(
-        SPOTIFY_CLIENT_ID,
-        SPOTIFY_REDIRECT_URI,
-        SPOTIFY_SCOPES.to_vec(),
-    )
-    .with_custom_message(REDIRECT_RESPONSE);
+    let client_id = spotify_client_id();
+    let mut builder =
+        OAuthClientBuilder::new(&client_id, SPOTIFY_REDIRECT_URI, SPOTIFY_SCOPES.to_vec())
+            .with_custom_message(REDIRECT_RESPONSE);
 
     if open_browser {
         builder = builder.open_in_browser();
@@ -282,12 +318,9 @@ fn run_oauth_flow(open_browser: bool) -> Result<OAuthToken, OAuthError> {
 
 /// Refresh an existing access token using a cached refresh token.
 fn refresh_access_token(refresh_token: &str) -> Result<OAuthToken, OAuthError> {
-    let client = OAuthClientBuilder::new(
-        SPOTIFY_CLIENT_ID,
-        SPOTIFY_REDIRECT_URI,
-        SPOTIFY_SCOPES.to_vec(),
-    )
-    .build()?;
+    let client_id = spotify_client_id();
+    let client = OAuthClientBuilder::new(&client_id, SPOTIFY_REDIRECT_URI, SPOTIFY_SCOPES.to_vec())
+        .build()?;
 
     client.refresh_token(refresh_token)
 }
@@ -610,5 +643,48 @@ mod tests {
     #[test]
     fn not_headless_local_desktop() {
         assert!(!detect_headless(false, true));
+    }
+
+    // ── client_id resolution tests ───────────────────────────────────
+    //
+    // `std::env` is process-global; these tests serialise through a
+    // `Mutex` so they never race with each other or with the doctest
+    // that also reads `$CLITUNES_SPOTIFY_CLIENT_ID`.
+
+    use std::sync::Mutex;
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    #[test]
+    fn client_id_defaults_to_shared_when_env_unset() {
+        let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        std::env::remove_var(CLIENT_ID_ENV);
+        assert_eq!(spotify_client_id(), LIBRESPOT_SHARED_CLIENT_ID);
+    }
+
+    #[test]
+    fn client_id_uses_env_override() {
+        let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        std::env::set_var(CLIENT_ID_ENV, "my-own-app-id-32chars-exactly-ok");
+        assert_eq!(spotify_client_id(), "my-own-app-id-32chars-exactly-ok");
+        std::env::remove_var(CLIENT_ID_ENV);
+    }
+
+    #[test]
+    fn client_id_trims_whitespace_from_env() {
+        let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        std::env::set_var(CLIENT_ID_ENV, "  spaced-id  ");
+        assert_eq!(spotify_client_id(), "spaced-id");
+        std::env::remove_var(CLIENT_ID_ENV);
+    }
+
+    #[test]
+    fn client_id_falls_back_on_empty_env() {
+        // Treat an empty or all-whitespace override as "not set" so a
+        // stray `export CLITUNES_SPOTIFY_CLIENT_ID=` in a shell profile
+        // doesn't break auth.
+        let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        std::env::set_var(CLIENT_ID_ENV, "   ");
+        assert_eq!(spotify_client_id(), LIBRESPOT_SHARED_CLIENT_ID);
+        std::env::remove_var(CLIENT_ID_ENV);
     }
 }

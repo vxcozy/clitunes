@@ -86,6 +86,40 @@ clitunes source radio <station-uuid>
 
 Or press **s** in the TUI to reopen the station picker.
 
+## Use your own Spotify Developer App (optional)
+
+clitunes ships with librespot's embedded PKCE client ID — the same one
+spotifyd, ncspot, and most community players use. It's fine for playback
+but **rate-limited across every app that shares it**, so Web API calls
+(search, library, playlists) routinely return HTTP 429 "Too Many
+Requests" during peak hours.
+
+Register a personal Developer App to get your own quota:
+
+1. Visit [developer.spotify.com/dashboard](https://developer.spotify.com/dashboard)
+   and sign in with your Premium account
+2. **Create app** — name it anything (e.g. "clitunes-personal")
+3. Set the redirect URI to exactly `http://127.0.0.1:8898/login`
+   (the port isn't configurable in clitunes; other URIs will fail the
+   OAuth callback)
+4. Under APIs used, tick **Web API**
+5. Copy the **Client ID** shown on the app dashboard
+6. Export it and re-authenticate:
+
+   ```
+   export CLITUNES_SPOTIFY_CLIENT_ID=<your-client-id>
+   rm ~/.config/clitunes/spotify/credentials.json
+   clitunes auth
+   ```
+
+Cached tokens are tied to whichever client_id was used at auth time, so
+switching between the shared default and your own app requires deleting
+the credential file once. Put the `export` in your shell profile so the
+daemon inherits it on launch.
+
+Empty or whitespace-only values are treated as "not set" and fall back
+to the shared client ID.
+
 ## Spotify Connect (v1.2)
 
 Spotify Connect support — letting clitunes appear as a playback target in

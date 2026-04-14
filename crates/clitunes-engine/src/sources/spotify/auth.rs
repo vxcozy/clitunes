@@ -649,32 +649,51 @@ mod tests {
     //
     // `std::env` is process-global; these tests serialise through a
     // `Mutex` so they never race with each other or with the doctest
-    // that also reads `$CLITUNES_SPOTIFY_CLIENT_ID`.
+    // that also reads `$CLITUNES_SPOTIFY_CLIENT_ID`. The `EnvGuard`
+    // clears the var on drop so a panicking assertion still leaves a
+    // clean env for the next test.
 
-    use std::sync::Mutex;
+    use std::sync::{Mutex, MutexGuard};
     static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    /// Lock the env mutex and guarantee `$CLITUNES_SPOTIFY_CLIENT_ID`
+    /// is cleared when the test returns — success or panic.
+    struct EnvGuard {
+        _lock: MutexGuard<'static, ()>,
+    }
+
+    impl EnvGuard {
+        fn acquire() -> Self {
+            let lock = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+            std::env::remove_var(CLIENT_ID_ENV);
+            Self { _lock: lock }
+        }
+    }
+
+    impl Drop for EnvGuard {
+        fn drop(&mut self) {
+            std::env::remove_var(CLIENT_ID_ENV);
+        }
+    }
 
     #[test]
     fn client_id_defaults_to_shared_when_env_unset() {
-        let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        std::env::remove_var(CLIENT_ID_ENV);
+        let _g = EnvGuard::acquire();
         assert_eq!(spotify_client_id(), LIBRESPOT_SHARED_CLIENT_ID);
     }
 
     #[test]
     fn client_id_uses_env_override() {
-        let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _g = EnvGuard::acquire();
         std::env::set_var(CLIENT_ID_ENV, "my-own-app-id-32chars-exactly-ok");
         assert_eq!(spotify_client_id(), "my-own-app-id-32chars-exactly-ok");
-        std::env::remove_var(CLIENT_ID_ENV);
     }
 
     #[test]
     fn client_id_trims_whitespace_from_env() {
-        let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _g = EnvGuard::acquire();
         std::env::set_var(CLIENT_ID_ENV, "  spaced-id  ");
         assert_eq!(spotify_client_id(), "spaced-id");
-        std::env::remove_var(CLIENT_ID_ENV);
     }
 
     #[test]
@@ -682,9 +701,8 @@ mod tests {
         // Treat an empty or all-whitespace override as "not set" so a
         // stray `export CLITUNES_SPOTIFY_CLIENT_ID=` in a shell profile
         // doesn't break auth.
-        let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _g = EnvGuard::acquire();
         std::env::set_var(CLIENT_ID_ENV, "   ");
         assert_eq!(spotify_client_id(), LIBRESPOT_SHARED_CLIENT_ID);
-        std::env::remove_var(CLIENT_ID_ENV);
     }
 }

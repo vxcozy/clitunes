@@ -162,8 +162,16 @@ impl SpotifySink {
         }
 
         if !self.output_buf.is_empty() {
-            tx.send(std::mem::take(&mut self.output_buf))
-                .map_err(|_| SinkError::NotConnected("receiver dropped".into()))?;
+            // A closed channel means `run_spotify_playback` dropped `pcm_rx`
+            // to wake us out of a full-channel park during graceful shutdown.
+            // Swallowing instead of surfacing `SinkError::NotConnected` keeps
+            // librespot from logging it as an audio-sink error; Player::drop
+            // is milliseconds away and there's nothing for a caller to do.
+            if tx.send(std::mem::take(&mut self.output_buf)).is_err() {
+                self.accum_l.clear();
+                self.accum_r.clear();
+                return Ok(());
+            }
             if let Some(notify) = &self.pcm_notify {
                 notify.notify_one();
             }

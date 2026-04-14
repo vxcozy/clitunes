@@ -726,11 +726,17 @@ fn is_auth_shaped(err: &anyhow::Error) -> bool {
 /// Map any auth/webapi error to a `CommandResult { ok: false, .. }`.
 /// Keeps dispatch handlers terse.
 ///
+/// `context` is the dispatcher-level verb ("spotify search", "spotify
+/// library", …). It is the **only** layer that should carry that verb
+/// — the per-call `.context()` strings in `sources/spotify/webapi.rs`
+/// deliberately add narrower segments ("saved tracks", "fetch playlist
+/// items") so the chain reads as `"spotify library: saved tracks:
+/// <cause>"` rather than a doubled prefix.
+///
 /// Uses `{err:#}` (anyhow's alt formatter) so the full cause chain is
-/// rendered in both the daemon log and the CLI-facing message. The
-/// prior `%err` only printed the outermost `.context()`, which is the
-/// same string we pass as `context` here — so every failure logged as
-/// `"spotify search: spotify search"` with the real cause hidden.
+/// rendered in both the daemon log and the CLI-facing message. A plain
+/// `%err` would print only the outermost segment, hiding the real
+/// reason behind whichever context is attached last.
 #[cfg(feature = "webapi")]
 fn webapi_err(cmd_id: &str, context: &str, err: anyhow::Error) -> Event {
     tracing::warn!(

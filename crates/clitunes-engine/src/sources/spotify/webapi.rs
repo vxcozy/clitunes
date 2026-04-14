@@ -105,8 +105,7 @@ impl SpotifyWebApi {
         let result = self
             .client
             .search(query, SearchType::Track, None, None, limit, None)
-            .await
-            .context("spotify search")?;
+            .await?;
 
         match result {
             SearchResult::Tracks(page) => {
@@ -126,7 +125,7 @@ impl SpotifyWebApi {
             .client
             .current_user_saved_tracks_manual(None, limit, None)
             .await
-            .context("spotify saved tracks")?;
+            .context("saved tracks")?;
         let items = page.items.iter().map(map::saved_track_to_item).collect();
         Ok((items, page.total))
     }
@@ -138,7 +137,7 @@ impl SpotifyWebApi {
             .client
             .current_user_saved_albums_manual(None, limit, None)
             .await
-            .context("spotify saved albums")?;
+            .context("saved albums")?;
         let items = page.items.iter().map(map::saved_album_to_item).collect();
         Ok((items, page.total))
     }
@@ -150,7 +149,7 @@ impl SpotifyWebApi {
             .client
             .current_user_playlists_manual(limit, None)
             .await
-            .context("spotify user playlists")?;
+            .context("user playlists")?;
         let items = page
             .items
             .iter()
@@ -168,7 +167,7 @@ impl SpotifyWebApi {
             .client
             .current_user_recently_played(limit, None)
             .await
-            .context("spotify recently played")?;
+            .context("recently played")?;
         let items: Vec<BrowseItem> = page.items.iter().map(map::play_history_to_item).collect();
         let total = items.len() as u32;
         Ok((items, total))
@@ -181,8 +180,7 @@ impl SpotifyWebApi {
         id_or_uri: &str,
         limit: Option<u32>,
     ) -> Result<(String, Vec<BrowseItem>, u32)> {
-        let playlist_id =
-            PlaylistId::from_id_or_uri(id_or_uri).context("parse spotify playlist id/uri")?;
+        let playlist_id = PlaylistId::from_id_or_uri(id_or_uri).context("parse playlist id/uri")?;
 
         // Fetch the playlist itself first for the display name (Spotify
         // does not return it on the `/items` endpoint).
@@ -190,14 +188,14 @@ impl SpotifyWebApi {
             .client
             .playlist(playlist_id.as_ref(), None, None)
             .await
-            .context("spotify playlist")?;
+            .context("fetch playlist metadata")?;
 
         let limit = limit.or(Some(DEFAULT_LIMIT));
         let page = self
             .client
             .playlist_items_manual(playlist_id.as_ref(), None, None, limit, None)
             .await
-            .context("spotify playlist items")?;
+            .context("fetch playlist items")?;
 
         let items = page
             .items

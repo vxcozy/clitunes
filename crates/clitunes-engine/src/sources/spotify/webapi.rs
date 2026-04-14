@@ -83,6 +83,14 @@ impl SpotifyWebApi {
     /// surprise because we asked for `SearchType::Track`), the method
     /// returns `(Vec::new(), 0)` rather than erroring.
     ///
+    /// Spotify occasionally returns a non-`Tracks` `SearchResult` variant
+    /// even when `SearchType::Track` is requested (e.g. if the query is
+    /// degenerate or Spotify decides to surface a different entity). We
+    /// treat that as an empty result — `Ok((vec![], 0))` — rather than
+    /// erroring, so a single odd response doesn't fail the whole verb.
+    /// Callers that want to distinguish "empty" from "surprise" must look
+    /// at `total`: zero with a non-empty query hints at this path.
+    ///
     /// # Examples
     ///
     /// ```no_run

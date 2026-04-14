@@ -61,8 +61,9 @@ e2e_log "workdir: $WORKDIR"
 AUTH_PID=$!
 e2e_log "auth started (pid $AUTH_PID)"
 
-# Give it time to print the headless banner and start listening.
-sleep 3
+# Wait for the headless banner on stderr before killing. Polls up to 10s
+# so slow CI runners don't race with the first log flush.
+wait_for_log "$WORKDIR/auth_stderr.log" 'Headless mode detected' 10
 
 # Kill the OAuth flow — we don't have a way to complete the redirect.
 if kill -0 "$AUTH_PID" 2>/dev/null; then

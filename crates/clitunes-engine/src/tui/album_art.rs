@@ -194,6 +194,32 @@ impl AlbumArtState {
     /// Request art for `url`. If `url` is already loaded or already in
     /// flight, this is a no-op. If different, any in-flight fetch is
     /// dropped and a new one is spawned.
+    ///
+    /// # Examples
+    ///
+    /// Same-URL requests are idempotent: repeatedly requesting the URL
+    /// already in flight keeps the same pending fetch rather than
+    /// cancelling and re-spawning it.
+    ///
+    /// ```
+    /// # // The tokio::spawn inside request() needs a runtime in scope.
+    /// # let rt = tokio::runtime::Builder::new_current_thread()
+    /// #     .enable_all()
+    /// #     .build()
+    /// #     .unwrap();
+    /// # let _guard = rt.enter();
+    /// use clitunes_engine::tui::album_art::AlbumArtState;
+    ///
+    /// let mut state = AlbumArtState::new();
+    /// assert!(state.current_url().is_none());
+    ///
+    /// state.request("https://i.scdn.co/image/ab67616d0000b2737f0c3b0e");
+    /// // Repeated request for the same URL is a no-op — no panic, no
+    /// // redundant fetch. The current art slot stays empty until the
+    /// // spawned fetch finishes.
+    /// state.request("https://i.scdn.co/image/ab67616d0000b2737f0c3b0e");
+    /// assert!(state.current_url().is_none());
+    /// ```
     pub fn request(&mut self, url: &str) {
         if self.current_url() == Some(url) {
             return;

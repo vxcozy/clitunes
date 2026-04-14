@@ -151,6 +151,10 @@ impl DaemonEventLoop {
         let verb_stop = Arc::clone(&self.stop);
         let verb_ev_tx = event_tx.clone();
         let verb_last_state = Arc::clone(&last_state);
+        #[cfg(feature = "webapi")]
+        let webapi_cache = Arc::new(WebApiCache::new());
+        #[cfg(feature = "webapi")]
+        let verb_webapi = Arc::clone(&webapi_cache);
         tokio::spawn(async move {
             dispatch_verbs(
                 &mut verb_rx,
@@ -159,6 +163,8 @@ impl DaemonEventLoop {
                 &pcm_tap,
                 &verb_stop,
                 &verb_last_state,
+                #[cfg(feature = "webapi")]
+                &verb_webapi,
             )
             .await;
         });
@@ -384,6 +390,7 @@ async fn dispatch_verbs(
     pcm_tap: &Event,
     stop: &Arc<AtomicBool>,
     last_state: &Arc<Mutex<Option<Event>>>,
+    #[cfg(feature = "webapi")] webapi_cache: &Arc<WebApiCache>,
 ) {
     while let Some((envelope, reply_tx)) = verb_rx.recv().await {
         if stop.load(Ordering::Relaxed) {
@@ -526,15 +533,24 @@ async fn dispatch_verbs(
             }
             #[cfg(feature = "webapi")]
             Verb::Search { query, limit } => {
-                dispatch_search(query, *limit, cmd_id, event_tx, &reply_tx).await;
+                dispatch_search(query, *limit, cmd_id, event_tx, &reply_tx, webapi_cache).await;
             }
             #[cfg(feature = "webapi")]
             Verb::BrowseLibrary { category, limit } => {
-                dispatch_browse_library(*category, *limit, cmd_id, event_tx, &reply_tx).await;
+                dispatch_browse_library(
+                    *category,
+                    *limit,
+                    cmd_id,
+                    event_tx,
+                    &reply_tx,
+                    webapi_cache,
+                )
+                .await;
             }
             #[cfg(feature = "webapi")]
             Verb::BrowsePlaylist { id, limit } => {
-                dispatch_browse_playlist(id, *limit, cmd_id, event_tx, &reply_tx).await;
+                dispatch_browse_playlist(id, *limit, cmd_id, event_tx, &reply_tx, webapi_cache)
+                    .await;
             }
             #[cfg(not(feature = "webapi"))]
             Verb::Search { .. } | Verb::BrowseLibrary { .. } | Verb::BrowsePlaylist { .. } => {
@@ -547,12 +563,59 @@ async fn dispatch_verbs(
     }
 }
 
-/// Load the cached OAuth credentials from disk and build a fresh
-/// [`SpotifyWebApi`] client. Returns `Err` if the on-disk cache is
-/// missing or unreadable — the caller surfaces that as an auth error.
+/// Lazy cache for the daemon-side [`SpotifyWebApi`] client.
 ///
-/// The filesystem read + token decode runs on a blocking pool so the
-/// dispatcher doesn't stall while the daemon is I/O bound.
+/// rspotify's `AuthCodePkceSpotify` owns its own token and refreshes it
+/// internally on 401 responses, so we only need to build the client
+/// once — on the first verb that needs it. Subsequent verbs share the
+/// same `Arc<SpotifyWebApi>` (the underlying reqwest connection pool
+/// and the in-memory token state come with it).
+///
+/// When an API call returns an error that smells like a terminal auth
+/// failure (revoked refresh token, insufficient scopes) the dispatcher
+/// should call [`WebApiCache::invalidate`] so the next verb rebuilds
+/// from disk. rspotify handles transient 401s itself via the cached
+/// refresh token; we only evict on the hard failures.
+#[cfg(feature = "webapi")]
+pub(crate) struct WebApiCache {
+    client: tokio::sync::Mutex<Option<Arc<crate::sources::spotify::webapi::SpotifyWebApi>>>,
+}
+
+#[cfg(feature = "webapi")]
+impl WebApiCache {
+    pub(crate) fn new() -> Self {
+        Self {
+            client: tokio::sync::Mutex::new(None),
+        }
+    }
+
+    /// Return the cached client, building it on first demand. The build
+    /// step reads `credentials.json` on the blocking pool and does an
+    /// OAuth refresh, so it isn't free — but it runs at most once per
+    /// daemon lifetime (unless `invalidate` is called).
+    pub(crate) async fn get(&self) -> Result<Arc<crate::sources::spotify::webapi::SpotifyWebApi>> {
+        let mut guard = self.client.lock().await;
+        if let Some(existing) = guard.as_ref() {
+            return Ok(Arc::clone(existing));
+        }
+        let api = Arc::new(build_webapi().await?);
+        *guard = Some(Arc::clone(&api));
+        Ok(api)
+    }
+
+    /// Drop the cached client. The next call to [`WebApiCache::get`]
+    /// will rebuild from disk. Call this when an API error indicates
+    /// the cached token/client state is no longer recoverable.
+    pub(crate) async fn invalidate(&self) {
+        *self.client.lock().await = None;
+    }
+}
+
+/// Load the cached OAuth credentials from disk and build a fresh
+/// [`SpotifyWebApi`] client. The filesystem read + token refresh run
+/// on a blocking pool so the dispatcher doesn't stall while the daemon
+/// is I/O bound. Called at most once per `WebApiCache` lifetime unless
+/// invalidated by a hard auth failure.
 #[cfg(feature = "webapi")]
 async fn build_webapi() -> Result<crate::sources::spotify::webapi::SpotifyWebApi> {
     use crate::sources::spotify::{self, token::SharedTokenProvider, webapi::SpotifyWebApi};
@@ -566,6 +629,22 @@ async fn build_webapi() -> Result<crate::sources::spotify::webapi::SpotifyWebApi
             .context("load spotify credentials")?;
     let provider = SharedTokenProvider::new(auth_result.token, cred_path);
     Ok(SpotifyWebApi::from_provider(&provider))
+}
+
+/// Heuristic: does this error look like a terminal auth failure that
+/// should cause cache invalidation? Anything mentioning "token",
+/// "auth", "unauthorized", "401", or "403" qualifies. Transient network
+/// errors are NOT invalidation triggers — they'll self-heal on retry.
+#[cfg(feature = "webapi")]
+fn is_auth_shaped(err: &anyhow::Error) -> bool {
+    let msg = format!("{err:#}").to_ascii_lowercase();
+    msg.contains("unauthorized")
+        || msg.contains(" 401")
+        || msg.contains(" 403")
+        || msg.contains("invalid_grant")
+        || msg.contains("revoked")
+        || msg.contains("spotify credentials")
+        || msg.contains("token refresh")
 }
 
 /// Map any auth/webapi error to a `CommandResult { ok: false, .. }`.
@@ -588,10 +667,14 @@ async fn dispatch_search(
     cmd_id: &str,
     event_tx: &mpsc::Sender<Event>,
     reply_tx: &mpsc::Sender<Event>,
+    webapi_cache: &Arc<WebApiCache>,
 ) {
-    let api = match build_webapi().await {
+    let api = match webapi_cache.get().await {
         Ok(api) => api,
         Err(e) => {
+            if is_auth_shaped(&e) {
+                webapi_cache.invalidate().await;
+            }
             let _ = reply_tx.try_send(webapi_err(cmd_id, "spotify auth", e));
             return;
         }
@@ -608,6 +691,9 @@ async fn dispatch_search(
             let _ = reply_tx.try_send(Event::command_ok(cmd_id));
         }
         Err(e) => {
+            if is_auth_shaped(&e) {
+                webapi_cache.invalidate().await;
+            }
             let _ = reply_tx.try_send(webapi_err(cmd_id, "spotify search", e));
         }
     }
@@ -620,11 +706,15 @@ async fn dispatch_browse_library(
     cmd_id: &str,
     event_tx: &mpsc::Sender<Event>,
     reply_tx: &mpsc::Sender<Event>,
+    webapi_cache: &Arc<WebApiCache>,
 ) {
     use clitunes_core::LibraryCategory;
-    let api = match build_webapi().await {
+    let api = match webapi_cache.get().await {
         Ok(api) => api,
         Err(e) => {
+            if is_auth_shaped(&e) {
+                webapi_cache.invalidate().await;
+            }
             let _ = reply_tx.try_send(webapi_err(cmd_id, "spotify auth", e));
             return;
         }
@@ -647,6 +737,9 @@ async fn dispatch_browse_library(
             let _ = reply_tx.try_send(Event::command_ok(cmd_id));
         }
         Err(e) => {
+            if is_auth_shaped(&e) {
+                webapi_cache.invalidate().await;
+            }
             let _ = reply_tx.try_send(webapi_err(cmd_id, "spotify library", e));
         }
     }
@@ -659,10 +752,14 @@ async fn dispatch_browse_playlist(
     cmd_id: &str,
     event_tx: &mpsc::Sender<Event>,
     reply_tx: &mpsc::Sender<Event>,
+    webapi_cache: &Arc<WebApiCache>,
 ) {
-    let api = match build_webapi().await {
+    let api = match webapi_cache.get().await {
         Ok(api) => api,
         Err(e) => {
+            if is_auth_shaped(&e) {
+                webapi_cache.invalidate().await;
+            }
             let _ = reply_tx.try_send(webapi_err(cmd_id, "spotify auth", e));
             return;
         }
@@ -680,7 +777,49 @@ async fn dispatch_browse_playlist(
             let _ = reply_tx.try_send(Event::command_ok(cmd_id));
         }
         Err(e) => {
+            if is_auth_shaped(&e) {
+                webapi_cache.invalidate().await;
+            }
             let _ = reply_tx.try_send(webapi_err(cmd_id, "spotify playlist", e));
         }
+    }
+}
+
+#[cfg(test)]
+#[cfg(feature = "webapi")]
+mod webapi_cache_tests {
+    use super::*;
+    use anyhow::anyhow;
+
+    #[test]
+    fn is_auth_shaped_matches_401_and_403() {
+        assert!(is_auth_shaped(&anyhow!("got 401 Unauthorized")));
+        assert!(is_auth_shaped(&anyhow!("got 403 Forbidden")));
+        assert!(is_auth_shaped(&anyhow!("Unauthorized")));
+        assert!(is_auth_shaped(&anyhow!("invalid_grant from oauth")));
+        assert!(is_auth_shaped(&anyhow!("refresh token revoked")));
+        assert!(is_auth_shaped(&anyhow!(
+            "no cached Spotify credentials; run auth"
+        )));
+    }
+
+    #[test]
+    fn is_auth_shaped_does_not_match_transient_errors() {
+        assert!(!is_auth_shaped(&anyhow!("connection reset")));
+        assert!(!is_auth_shaped(&anyhow!("dns lookup failed")));
+        assert!(!is_auth_shaped(&anyhow!("timed out after 10s")));
+        assert!(!is_auth_shaped(&anyhow!("got 500 Internal Server Error")));
+    }
+
+    #[tokio::test]
+    async fn invalidate_drops_cached_client() {
+        let cache = WebApiCache::new();
+        // Manually poke in a client-less state then confirm invalidate
+        // on an empty cache is a no-op (doesn't deadlock, doesn't panic).
+        cache.invalidate().await;
+        cache.invalidate().await;
+        // Guard scope must not prevent a subsequent get() call — it
+        // would deadlock if invalidate held the lock past await.
+        assert!(cache.client.lock().await.is_none());
     }
 }

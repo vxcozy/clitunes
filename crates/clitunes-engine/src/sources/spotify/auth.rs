@@ -77,6 +77,22 @@ pub struct AuthResult {
 /// This is the daemon-safe entry point. The daemon is a double-forked
 /// detached process with no terminal; interactive auth must be driven
 /// by the client via [`load_or_authenticate`].
+///
+/// # Examples
+///
+/// A missing credential file produces a clean `Err` — no prompt, no
+/// hang. This is the invariant the daemon relies on:
+///
+/// ```
+/// use std::path::PathBuf;
+/// use clitunes_engine::sources::spotify::auth::load_credentials;
+///
+/// let missing = PathBuf::from("/tmp/clitunes-doctest-nonexistent.json");
+/// match load_credentials(&missing) {
+///     Ok(_) => panic!("expected an error for a missing credential file"),
+///     Err(e) => assert!(e.to_string().contains("no cached Spotify credentials")),
+/// }
+/// ```
 pub fn load_credentials(cred_path: &Path) -> Result<AuthResult> {
     let cached = load_cached(cred_path)?
         .ok_or_else(|| anyhow::anyhow!("no cached Spotify credentials; run `clitunes auth` or play a Spotify URI from the client to authenticate"))?;

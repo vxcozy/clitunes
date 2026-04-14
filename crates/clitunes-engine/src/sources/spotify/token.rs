@@ -26,6 +26,7 @@ use super::auth;
 pub struct SharedTokenProvider {
     token: OAuthToken,
     cred_path: PathBuf,
+    wallclock_expires_at: chrono::DateTime<chrono::Utc>,
 }
 
 impl SharedTokenProvider {
@@ -49,7 +50,25 @@ impl SharedTokenProvider {
     /// assert_eq!(provider.rspotify_token().access_token, "access-abc");
     /// ```
     pub fn new(token: OAuthToken, cred_path: PathBuf) -> Self {
-        Self { token, cred_path }
+        let wallclock_expires_at = Self::compute_wallclock_expiry(&token);
+        Self {
+            token,
+            cred_path,
+            wallclock_expires_at,
+        }
+    }
+
+    /// Compute a wall-clock expiry from the librespot-oauth
+    /// `Instant`-based expiry, captured relative to "now". Clamps to
+    /// zero duration if the expiry is already in the past.
+    fn compute_wallclock_expiry(token: &OAuthToken) -> chrono::DateTime<chrono::Utc> {
+        let remaining = token
+            .expires_at
+            .checked_duration_since(std::time::Instant::now())
+            .unwrap_or(Duration::ZERO);
+        let chrono_remaining =
+            chrono::Duration::from_std(remaining).unwrap_or_else(|_| chrono::Duration::zero());
+        chrono::Utc::now() + chrono_remaining
     }
 
     /// Build an rspotify [`Token`] from the current OAuth state.
@@ -79,18 +98,15 @@ impl SharedTokenProvider {
     /// assert!(t.refresh_token.is_some());
     /// ```
     pub fn rspotify_token(&self) -> Token {
-        let expires_in = self
-            .token
-            .expires_at
-            .checked_duration_since(std::time::Instant::now())
-            .unwrap_or(Duration::ZERO);
+        let expires_in =
+            (self.wallclock_expires_at - chrono::Utc::now()).max(chrono::Duration::zero());
 
         let scopes: HashSet<String> = self.token.scopes.iter().cloned().collect();
 
         Token {
             access_token: self.token.access_token.clone(),
-            expires_in: chrono::Duration::from_std(expires_in).unwrap_or(chrono::Duration::zero()),
-            expires_at: Some(chrono::Utc::now() + expires_in),
+            expires_in,
+            expires_at: Some(self.wallclock_expires_at),
             refresh_token: Some(self.token.refresh_token.clone()),
             scopes,
         }
@@ -103,6 +119,7 @@ impl SharedTokenProvider {
 
     /// Replace the held token (e.g. after a refresh cycle).
     pub fn update_token(&mut self, token: OAuthToken) {
+        self.wallclock_expires_at = Self::compute_wallclock_expiry(&token);
         self.token = token;
     }
 
@@ -111,7 +128,7 @@ impl SharedTokenProvider {
     /// surface an `auth_required` error to the client.
     pub fn refresh(&mut self) -> Result<()> {
         let auth_result = auth::load_credentials(&self.cred_path)?;
-        self.token = auth_result.token;
+        self.update_token(auth_result.token);
         Ok(())
     }
 }

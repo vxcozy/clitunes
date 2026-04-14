@@ -69,6 +69,13 @@ librespot-core = { version = "0.8", default-features = false, features = ["rustl
 librespot-playback = { version = "0.8", default-features = false, features = ["rustls-tls-native-roots"] }
 librespot-metadata = { version = "0.8", default-features = false, features = ["rustls-tls-native-roots"] }
 librespot-oauth = { version = "0.8", default-features = false, features = ["rustls-tls-native-roots"] }
+# Spotify Connect receiver (v1.2). librespot-connect runs the Spirc
+# state machine; librespot-discovery serves the `/addUser` HTTP endpoint
+# and advertises the device via mDNS. `with-libmdns` picks the pure-Rust
+# mDNS backend — no system libraries (dns-sd/avahi) required, keeps D15
+# straightforward across Linux and macOS.
+librespot-connect = { version = "0.8", default-features = false, features = ["rustls-tls-native-roots"] }
+librespot-discovery = { version = "0.8", default-features = false, features = ["rustls-tls-native-roots", "with-libmdns"] }
 rubato = "2"
 
 # Spotify Web API (v1.2). rspotify wraps the REST endpoints for search,
@@ -86,10 +93,12 @@ image = { version = "0.25", default-features = false, features = ["jpeg", "png"]
 # See: https://github.com/rustyhorde/vergen/issues/478
 # Remove this patch block when librespot publishes a release with the fix.
 [patch.crates-io]
-librespot-core     = { git = "https://github.com/librespot-org/librespot", branch = "dev" }
-librespot-playback = { git = "https://github.com/librespot-org/librespot", branch = "dev" }
-librespot-metadata = { git = "https://github.com/librespot-org/librespot", branch = "dev" }
-librespot-oauth    = { git = "https://github.com/librespot-org/librespot", branch = "dev" }
+librespot-core      = { git = "https://github.com/librespot-org/librespot", branch = "dev" }
+librespot-playback  = { git = "https://github.com/librespot-org/librespot", branch = "dev" }
+librespot-metadata  = { git = "https://github.com/librespot-org/librespot", branch = "dev" }
+librespot-oauth     = { git = "https://github.com/librespot-org/librespot", branch = "dev" }
+librespot-connect   = { git = "https://github.com/librespot-org/librespot", branch = "dev" }
+librespot-discovery = { git = "https://github.com/librespot-org/librespot", branch = "dev" }
 
 [profile.release]
 lto = "thin"

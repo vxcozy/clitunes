@@ -2,22 +2,32 @@
 //!
 //! [`SpotifySink`] receives decoded PCM from librespot at 44100 Hz,
 //! resamples to the daemon's target sample rate via rubato, and pushes
-//! `StereoFrame` slices through an `mpsc::SyncSender` to the blocking
-//! source thread.
+//! `StereoFrame` slices through an `mpsc::SyncSender` to whoever is
+//! currently *bound* to the sink via [`SpotifySinkHandle::bind`].
+//!
+//! # Why the sink is rebindable
+//!
+//! librespot's `Player::new` consumes a sink via an `FnOnce` builder, so
+//! the sink is a singleton for the Player's lifetime. clitunes shares a
+//! single `Arc<Player>` across tracks (and, in v1.2, across OAuth-URI
+//! playback and Spotify Connect), but each playback has its own
+//! `PcmWriter`. The sink therefore holds an `Arc<Mutex<Option<_>>>`
+//! that the active playback *binds* for its duration and *unbinds* when
+//! it ends. PCM produced while no binding is active is silently
+//! discarded — this is the normal gap between tracks.
 //!
 //! # Sample rate
 //!
-//! The target rate is **not fixed**. The daemon probes the audio device's
-//! native rate at startup and runs the entire pipeline (ring, decoders,
-//! SPMC bridge) at that rate so no second resample pass is ever needed.
-//! On 44.1 kHz hardware that means the sink becomes a near-identity pass
-//! (44100→44100, which rubato handles correctly); on 48 kHz hardware the
-//! sink upsamples. Passing a stale 48 kHz target to a 44.1 kHz device
-//! caused the pitch-shift regression that motivated making this
-//! configurable.
+//! The target rate is chosen once, when the daemon has probed the audio
+//! device and first builds the Player. All playbacks use the same rate,
+//! which is fine because the daemon's PCM ring runs at that one rate.
+//! On 44.1 kHz hardware the sink is a near-identity pass (rubato handles
+//! 44100→44100 correctly); on 48 kHz hardware it upsamples. A stale
+//! 48 kHz target on a 44.1 kHz device caused the pitch-shift regression
+//! that motivated making this configurable in v1.1.
 
-use std::sync::mpsc::SyncSender;
-use std::sync::Arc;
+use std::sync::mpsc::{self, SyncSender};
+use std::sync::{Arc, Mutex};
 
 use librespot_playback::audio_backend::{Open, Sink, SinkError, SinkResult};
 use librespot_playback::config::AudioFormat as LibrespotAudioFormat;
@@ -39,8 +49,8 @@ use clitunes_core::StereoFrame;
 /// latency well under one video frame (~21 ms at 48 kHz).
 const DEFAULT_CHUNK_SIZE: usize = 1024;
 
-/// Bounded channel capacity for back-pressure between the sink and the source
-/// thread. When full, `SyncSender::send` blocks, preventing OOM.
+/// Bounded channel capacity for back-pressure between the sink and the
+/// consumer thread. When full, `SyncSender::send` blocks, preventing OOM.
 const CHANNEL_CAPACITY: usize = 32;
 
 /// librespot delivers decoded PCM at 44.1 kHz for Ogg Vorbis tracks
@@ -48,32 +58,62 @@ const CHANNEL_CAPACITY: usize = 32;
 /// resamples from this rate to the caller's `target_rate`.
 const SPOTIFY_SOURCE_RATE: u32 = 44_100;
 
-/// Creates a new `(SpotifySink, std::sync::mpsc::Receiver<Vec<StereoFrame>>)` pair
-/// that resamples librespot's 44.1 kHz output to `target_rate` Hz.
-///
-/// The receiver should be consumed by the source thread that feeds the daemon
-/// audio pipeline. The sink is handed to librespot's player. `target_rate` should
-/// match the PCM ring / audio device rate — passing 48 kHz to a 44.1 kHz device
-/// pipeline causes a pitch-shift regression because no one downsamples the
-/// mismatch downstream.
-pub fn channel(
-    target_rate: u32,
-) -> (
-    SpotifySink,
-    std::sync::mpsc::Receiver<Vec<StereoFrame>>,
-    Arc<Notify>,
-) {
-    let (tx, rx) = std::sync::mpsc::sync_channel(CHANNEL_CAPACITY);
-    let notify = Arc::new(Notify::new());
-    let mut sink = SpotifySink::new(target_rate);
-    sink.set_sender(tx);
-    sink.pcm_notify = Some(Arc::clone(&notify));
-    (sink, rx, notify)
+/// What the sink currently routes PCM to. Cloned out of the shared
+/// mutex for each chunk so the mutex is never held across the blocking
+/// `SyncSender::send`.
+#[derive(Clone)]
+struct SinkBinding {
+    tx: SyncSender<Vec<StereoFrame>>,
+    notify: Arc<Notify>,
+}
+
+/// Shared slot the sink writes into and the consumer swaps via
+/// [`SpotifySinkHandle`]. `std::sync::Mutex` (not `tokio::sync::Mutex`)
+/// because the sink runs on librespot's dedicated thread, outside tokio,
+/// and the critical section is a ~nanosecond option swap.
+type SharedBinding = Arc<Mutex<Option<SinkBinding>>>;
+
+/// Build a new [`SpotifySink`] plus a clonable handle for binding
+/// consumers to it. The sink is intended to be moved into
+/// `Player::new`'s sink-builder closure; the handle stays with the
+/// caller so every playback can rebind freely.
+pub fn new_sink(target_rate: u32) -> (SpotifySink, SpotifySinkHandle) {
+    let bound: SharedBinding = Arc::new(Mutex::new(None));
+    let sink = SpotifySink::new(target_rate, Arc::clone(&bound));
+    let handle = SpotifySinkHandle { bound };
+    (sink, handle)
+}
+
+/// Caller-side handle used to attach and detach PCM consumers from the
+/// shared [`SpotifySink`]. Cheap to clone; all clones share one slot.
+#[derive(Clone)]
+pub struct SpotifySinkHandle {
+    bound: SharedBinding,
+}
+
+impl SpotifySinkHandle {
+    /// Attach a fresh PCM channel to the sink and return the consumer
+    /// end. The sink will start routing decoded, resampled frames to
+    /// this channel immediately. Any previous binding is replaced.
+    pub fn bind(&self) -> (mpsc::Receiver<Vec<StereoFrame>>, Arc<Notify>) {
+        let (tx, rx) = mpsc::sync_channel(CHANNEL_CAPACITY);
+        let notify = Arc::new(Notify::new());
+        *self.bound.lock().expect("sink binding mutex poisoned") = Some(SinkBinding {
+            tx,
+            notify: Arc::clone(&notify),
+        });
+        (rx, notify)
+    }
+
+    /// Detach the current consumer. Subsequent decoded frames are
+    /// silently dropped until someone calls [`Self::bind`] again.
+    pub fn unbind(&self) {
+        *self.bound.lock().expect("sink binding mutex poisoned") = None;
+    }
 }
 
 pub struct SpotifySink {
-    tx: Option<SyncSender<Vec<StereoFrame>>>,
-    pcm_notify: Option<Arc<Notify>>,
+    bound: SharedBinding,
     resampler: Option<Async<f64>>,
     accum_l: Vec<f64>,
     accum_r: Vec<f64>,
@@ -88,10 +128,9 @@ pub struct SpotifySink {
 }
 
 impl SpotifySink {
-    fn new(target_rate: u32) -> Self {
+    fn new(target_rate: u32, bound: SharedBinding) -> Self {
         Self {
-            tx: None,
-            pcm_notify: None,
+            bound,
             resampler: None,
             accum_l: Vec::new(),
             accum_r: Vec::new(),
@@ -100,11 +139,6 @@ impl SpotifySink {
             chunk_size: DEFAULT_CHUNK_SIZE,
             target_rate,
         }
-    }
-
-    /// Inject the bounded sender before playback starts.
-    pub fn set_sender(&mut self, tx: SyncSender<Vec<StereoFrame>>) {
-        self.tx = Some(tx);
     }
 
     /// Build the rubato `Async` sinc resampler (44100 Hz → `target_rate` Hz,
@@ -129,6 +163,48 @@ impl SpotifySink {
         .map_err(|e| SinkError::InvalidParams(format!("rubato init failed: {e}")))
     }
 
+    /// Snapshot the current binding. Cloning outside the lock keeps the
+    /// blocking `SyncSender::send` off the critical path and lets the
+    /// consumer `unbind()` at any moment without deadlocking the sink.
+    fn current_binding(&self) -> Option<SinkBinding> {
+        self.bound
+            .lock()
+            .expect("sink binding mutex poisoned")
+            .clone()
+    }
+
+    /// Deliver the filled `output_buf` to whoever is bound, clearing
+    /// accumulators if the receiver has gone away. Unbound state is
+    /// normal between tracks — we simply drop the PCM on the floor.
+    fn deliver_output(&mut self) -> SinkResult<()> {
+        if self.output_buf.is_empty() {
+            return Ok(());
+        }
+        let Some(binding) = self.current_binding() else {
+            // No consumer right now — between-tracks gap. Discard
+            // silently; librespot will keep decoding until it hits
+            // EndOfTrack / Stop.
+            self.output_buf.clear();
+            return Ok(());
+        };
+
+        if binding
+            .tx
+            .send(std::mem::take(&mut self.output_buf))
+            .is_err()
+        {
+            // Receiver dropped — the current playback is tearing down.
+            // Clear accumulators so the next binding starts clean, and
+            // swallow the error rather than surfacing it to librespot
+            // (which would log it as an audio-sink failure).
+            self.accum_l.clear();
+            self.accum_r.clear();
+            return Ok(());
+        }
+        binding.notify.notify_one();
+        Ok(())
+    }
+
     /// Push one complete chunk (of exactly `chunk_size` frames per channel)
     /// through the resampler and send the resulting `StereoFrame`s.
     fn resample_and_send(&mut self, left: &[f64], right: &[f64]) -> SinkResult<()> {
@@ -136,10 +212,6 @@ impl SpotifySink {
             .resampler
             .as_mut()
             .ok_or_else(|| SinkError::NotConnected("resampler not initialised".into()))?;
-        let tx = self
-            .tx
-            .as_ref()
-            .ok_or_else(|| SinkError::NotConnected("sender not set".into()))?;
 
         self.channel_bufs[0].clear();
         self.channel_bufs[0].extend_from_slice(left);
@@ -161,23 +233,7 @@ impl SpotifySink {
             self.output_buf.push(StereoFrame { l, r });
         }
 
-        if !self.output_buf.is_empty() {
-            // A closed channel means `run_spotify_playback` dropped `pcm_rx`
-            // to wake us out of a full-channel park during graceful shutdown.
-            // Swallowing instead of surfacing `SinkError::NotConnected` keeps
-            // librespot from logging it as an audio-sink error; Player::drop
-            // is milliseconds away and there's nothing for a caller to do.
-            if tx.send(std::mem::take(&mut self.output_buf)).is_err() {
-                self.accum_l.clear();
-                self.accum_r.clear();
-                return Ok(());
-            }
-            if let Some(notify) = &self.pcm_notify {
-                notify.notify_one();
-            }
-        }
-
-        Ok(())
+        self.deliver_output()
     }
 
     /// Flush a partial chunk (fewer than `chunk_size` frames) through the
@@ -192,10 +248,6 @@ impl SpotifySink {
             .resampler
             .as_mut()
             .ok_or_else(|| SinkError::NotConnected("resampler not initialised".into()))?;
-        let tx = self
-            .tx
-            .as_ref()
-            .ok_or_else(|| SinkError::NotConnected("sender not set".into()))?;
 
         // Pad accumulation buffers to chunk_size so the audioadapter wrapper
         // has enough frames. rubato will only read `remaining` via partial_len.
@@ -236,15 +288,7 @@ impl SpotifySink {
             self.output_buf.push(StereoFrame { l, r });
         }
 
-        if !self.output_buf.is_empty() {
-            // Best-effort send on stop; don't error if the receiver is gone.
-            let _ = tx.send(std::mem::take(&mut self.output_buf));
-            if let Some(notify) = &self.pcm_notify {
-                notify.notify_one();
-            }
-        }
-
-        Ok(())
+        self.deliver_output()
     }
 
     /// Drain accumulation buffers in chunk_size increments.
@@ -260,12 +304,13 @@ impl SpotifySink {
 
 impl Open for SpotifySink {
     /// Required by the librespot `Open` trait but not used in our path
-    /// — callers construct the sink via [`channel`] with an explicit
-    /// target rate. librespot never calls this in our embedding, but it
-    /// compiles-requires a default. Picks 48 kHz as a reasonable
-    /// fallback; any real use always goes through `channel()`.
+    /// — callers construct the sink via [`new_sink`] with an explicit
+    /// target rate and a shared binding slot. librespot never calls
+    /// this in our embedding, but a default is compile-required. Picks
+    /// 48 kHz and an orphan binding; any real use always goes through
+    /// `new_sink()`.
     fn open(_device: Option<String>, _format: LibrespotAudioFormat) -> Self {
-        Self::new(48_000)
+        Self::new(48_000, Arc::new(Mutex::new(None)))
     }
 }
 
@@ -311,19 +356,17 @@ impl Sink for SpotifySink {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::mpsc;
 
-    /// Helper: create a sink wired to a receiver, with start() already called.
-    /// Uses the historical 48 kHz target so the existing ratio tests still
-    /// exercise resampling rather than a 1:1 pass.
+    /// Helper: build a sink + handle, bind a receiver, call `start()`.
+    /// Uses the historical 48 kHz target so the existing ratio tests
+    /// still exercise real resampling rather than a 1:1 pass.
     fn test_sink() -> (SpotifySink, mpsc::Receiver<Vec<StereoFrame>>) {
         test_sink_at(48_000)
     }
 
     fn test_sink_at(target_rate: u32) -> (SpotifySink, mpsc::Receiver<Vec<StereoFrame>>) {
-        let (tx, rx) = mpsc::sync_channel(CHANNEL_CAPACITY);
-        let mut sink = SpotifySink::new(target_rate);
-        sink.set_sender(tx);
+        let (mut sink, handle) = new_sink(target_rate);
+        let (rx, _notify) = handle.bind();
         sink.start().expect("start should succeed");
         (sink, rx)
     }
@@ -533,5 +576,67 @@ mod tests {
         // Second cycle.
         sink.start().expect("re-start should succeed");
         sink.stop().expect("re-stop should succeed");
+    }
+
+    // ---------------------------------------------------------------
+    // 7. Rebinding: unbind then re-bind routes frames to the new
+    //    consumer. The previous consumer's receiver goes to Disconnected
+    //    the next time the sink touches it (if at all), and the fresh
+    //    receiver starts clean.
+    // ---------------------------------------------------------------
+    #[test]
+    fn rebind_routes_to_new_consumer() {
+        let (mut sink, handle) = new_sink(48_000);
+        let mut converter = test_converter();
+        sink.start().expect("start should succeed");
+
+        // First binding — drain enough to confirm routing.
+        let (rx1, _notify1) = handle.bind();
+        let samples: Vec<f64> = vec![0.0; DEFAULT_CHUNK_SIZE * 2];
+        sink.write(AudioPacket::Samples(samples), &mut converter)
+            .expect("write should succeed");
+        assert!(
+            !drain_rx(&rx1).is_empty(),
+            "first binding should receive frames"
+        );
+
+        // Unbind and emit a chunk into the void — should not error.
+        handle.unbind();
+        let samples: Vec<f64> = vec![0.0; DEFAULT_CHUNK_SIZE * 2];
+        sink.write(AudioPacket::Samples(samples), &mut converter)
+            .expect("write should succeed while unbound (frames discarded)");
+        assert!(drain_rx(&rx1).is_empty(), "rx1 should see no new frames");
+
+        // Re-bind and drain — the new receiver gets subsequent output.
+        let (rx2, _notify2) = handle.bind();
+        let samples: Vec<f64> = vec![0.0; DEFAULT_CHUNK_SIZE * 2];
+        sink.write(AudioPacket::Samples(samples), &mut converter)
+            .expect("write should succeed");
+        assert!(
+            !drain_rx(&rx2).is_empty(),
+            "re-bound receiver should get frames"
+        );
+    }
+
+    // ---------------------------------------------------------------
+    // 8. Dropped receiver mid-playback is a silent no-op for the sink
+    //    (mirrors the PR #29 shutdown-deadlock fix: we never surface
+    //    SinkError::NotConnected for a legitimately torn-down binding).
+    // ---------------------------------------------------------------
+    #[test]
+    fn dropped_receiver_does_not_error() {
+        let (mut sink, handle) = new_sink(48_000);
+        let mut converter = test_converter();
+        sink.start().expect("start should succeed");
+
+        let (rx, _notify) = handle.bind();
+        drop(rx);
+
+        // write after rx drop must not error — librespot would log it
+        // as an audio-sink failure, which is misleading during normal
+        // playback teardown.
+        let samples: Vec<f64> = vec![0.0; DEFAULT_CHUNK_SIZE * 2];
+        sink.write(AudioPacket::Samples(samples), &mut converter)
+            .expect("write after rx drop should not surface SinkError");
     }
 }

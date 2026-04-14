@@ -34,7 +34,8 @@ use crate::proto::events::Event;
 use clitunes_core::sanitize;
 
 /// A Spotify playback source. Bridges librespot's Player to the daemon's
-/// audio pipeline via [`SpotifySink`](sink::SpotifySink) and rubato resampling.
+/// audio pipeline via [`SpotifySink`](sink::SpotifySink) and rubato resampling
+/// into the daemon's PCM ring sample rate.
 pub struct SpotifySource {
     /// Spotify track URI to play (e.g. `spotify:track:4PTG3Z6ehGkBFwjybzWkR8`).
     uri: String,
@@ -42,6 +43,11 @@ pub struct SpotifySource {
     credentials_path: PathBuf,
     /// Channel to emit events (NowPlayingChanged, SourceError) to the daemon event loop.
     event_tx: tokio::sync::mpsc::Sender<Event>,
+    /// Target sample rate the sink should resample Spotify's 44.1 kHz
+    /// PCM to. Must match the daemon's PCM ring / audio device rate —
+    /// on 44.1 kHz hardware this is a 1:1 identity pass; on 48 kHz
+    /// hardware the sink upsamples.
+    target_sample_rate: u32,
 }
 
 impl SpotifySource {
@@ -50,15 +56,20 @@ impl SpotifySource {
     /// - `uri`: Spotify URI (e.g. `spotify:track:...`)
     /// - `credentials_path`: path to cached OAuth credentials file
     /// - `event_tx`: sender for daemon events (NowPlaying updates, errors)
+    /// - `target_sample_rate`: PCM ring / audio-device sample rate; the sink
+    ///   resamples librespot's 44.1 kHz output to this rate. Mismatch here
+    ///   causes a pitch-shift regression on non-48 kHz hardware.
     pub fn new(
         uri: String,
         credentials_path: PathBuf,
         event_tx: tokio::sync::mpsc::Sender<Event>,
+        target_sample_rate: u32,
     ) -> Self {
         Self {
             uri,
             credentials_path,
             event_tx,
+            target_sample_rate,
         }
     }
 }
@@ -72,6 +83,7 @@ impl super::Source for SpotifySource {
         let uri_str = self.uri.clone();
         let cred_path = self.credentials_path.clone();
         let event_tx = self.event_tx.clone();
+        let target_sample_rate = self.target_sample_rate;
 
         // Mirror outer stop → inner stop (same pattern as RadioSource).
         let inner_stop = Arc::new(AtomicBool::new(false));
@@ -104,6 +116,7 @@ impl super::Source for SpotifySource {
                         &event_tx,
                         writer,
                         &playback_stop,
+                        target_sample_rate,
                     )
                     .await
                     {
@@ -135,6 +148,7 @@ async fn run_spotify_playback(
     event_tx: &tokio::sync::mpsc::Sender<Event>,
     writer: &mut dyn PcmWriter,
     stop: &AtomicBool,
+    target_sample_rate: u32,
 ) -> Result<()> {
     // 1. Authenticate (daemon-safe: refresh only, never interactive).
     //    Runs on a blocking thread to avoid starving the async runtime
@@ -181,8 +195,10 @@ async fn run_spotify_playback(
     let spotify_uri = SpotifyUri::from_uri(uri_str)
         .map_err(|e| anyhow::anyhow!("invalid Spotify URI '{uri_str}': {e}"))?;
 
-    // 4. Create our custom sink with the PCM channel.
-    let (sink, pcm_rx, pcm_notify) = sink::channel();
+    // 4. Create our custom sink with the PCM channel, pinned to the
+    //    daemon ring's sample rate so no downstream rate mismatch
+    //    occurs on non-48 kHz hardware.
+    let (sink, pcm_rx, pcm_notify) = sink::channel(target_sample_rate);
 
     // 5. Create the librespot Player with our sink as the backend.
     let player_config = PlayerConfig::default();
@@ -439,6 +455,7 @@ mod tests {
             "spotify:track:test".into(),
             PathBuf::from("/tmp/test-creds.json"),
             tx,
+            48_000,
         );
         assert_eq!(source.name(), "spotify");
     }
@@ -484,7 +501,7 @@ mod tests {
 
     #[test]
     fn sink_channel_produces_notify() {
-        let (_sink, _rx, notify) = sink::channel();
+        let (_sink, _rx, notify) = sink::channel(48_000);
         // Verify the notify is functional (doesn't panic).
         notify.notify_one();
     }
@@ -495,7 +512,7 @@ mod tests {
         use librespot_playback::convert::Converter;
         use librespot_playback::decoder::AudioPacket;
 
-        let (mut sink_inst, _rx, notify) = sink::channel();
+        let (mut sink_inst, _rx, notify) = sink::channel(48_000);
         sink_inst.start().expect("start should succeed");
 
         // Send enough data to fill at least one chunk.
@@ -519,11 +536,13 @@ mod tests {
             "spotify:track:4PTG3Z6ehGkBFwjybzWkR8".into(),
             PathBuf::from("/home/user/.config/clitunes/spotify-creds.json"),
             tx,
+            48_000,
         );
         assert_eq!(source.uri, "spotify:track:4PTG3Z6ehGkBFwjybzWkR8");
         assert_eq!(
             source.credentials_path,
             PathBuf::from("/home/user/.config/clitunes/spotify-creds.json")
         );
+        assert_eq!(source.target_sample_rate, 48_000);
     }
 }

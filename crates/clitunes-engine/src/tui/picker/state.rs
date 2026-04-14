@@ -48,9 +48,11 @@ use crate::tui::picker::curated_seed::CuratedList;
 /// rates (~80–100 ms) always counts as rapid, while deliberate
 /// pauses between individual presses (~200+ ms) always reset.
 const MOMENTUM_THRESHOLD_MS: u128 = 150;
-/// Rapid-press count before accelerating to speed 2.
+/// Rapid-press count before accelerating to speed 2 (move 2 items
+/// per keypress). Five presses is roughly 0.5 s of held key.
 const ACCEL_TIER_1: usize = 5;
-/// Rapid-press count before accelerating to speed 3.
+/// Rapid-press count before accelerating to speed 3 (move 3 items
+/// per keypress). Ten presses is roughly 1 s of held key.
 const ACCEL_TIER_2: usize = 10;
 
 /// Map a rapid-press count to a scroll speed (1, 2, or 3).
@@ -808,5 +810,64 @@ mod tests {
             st.handle_key_at(PickerKey::Down, t);
         }
         assert_eq!(st.scroll_speed(), 2);
+    }
+
+    #[test]
+    fn momentum_accelerates_after_5_rapid_presses() {
+        let list = baked_list();
+        let mut st = PickerState::new(&list, 0);
+        let start = Instant::now();
+        // Simulate 5 rapid keypresses at 100ms intervals.
+        for i in 0..5 {
+            let t = start + Duration::from_millis(i as u64 * 100);
+            st.handle_key_at(PickerKey::Down, t);
+        }
+        assert_eq!(st.scroll_speed(), 2);
+    }
+
+    #[test]
+    fn momentum_accelerates_after_10_rapid_presses() {
+        let list = baked_list();
+        let mut st = PickerState::new(&list, 0);
+        let start = Instant::now();
+        for i in 0..10 {
+            let t = start + Duration::from_millis(i as u64 * 100);
+            st.handle_key_at(PickerKey::Down, t);
+        }
+        assert_eq!(st.scroll_speed(), 3);
+    }
+
+    #[test]
+    fn momentum_resets_on_pause() {
+        let list = baked_list();
+        let mut st = PickerState::new(&list, 0);
+        let start = Instant::now();
+        // 5 rapid presses → speed 2.
+        for i in 0..5 {
+            let t = start + Duration::from_millis(i as u64 * 100);
+            st.handle_key_at(PickerKey::Down, t);
+        }
+        assert_eq!(st.scroll_speed(), 2);
+        // Pause 200ms then press again → speed resets to 1.
+        let pause_t = start + Duration::from_millis(5 * 100 + 200);
+        st.handle_key_at(PickerKey::Down, pause_t);
+        assert_eq!(st.scroll_speed(), 1);
+    }
+
+    #[test]
+    fn momentum_moves_multiple_items() {
+        let list = baked_list();
+        let mut st = PickerState::new(&list, 0);
+        let start = Instant::now();
+        // 5 rapid presses to reach speed 2 on the Radio tab.
+        for i in 0..5 {
+            let t = start + Duration::from_millis(i as u64 * 100);
+            st.handle_key_at(PickerKey::Down, t);
+        }
+        // Press 1–4 at speed 1 (each moves 1 = 4). Press 5 triggers speed 2
+        // (moves 2 = 6 total). Clamped to radio_total.saturating_sub(1) if
+        // the curated list is shorter than 6.
+        let expected = 6usize.min(st.radio_total.saturating_sub(1));
+        assert_eq!(st.radio_selected, expected);
     }
 }

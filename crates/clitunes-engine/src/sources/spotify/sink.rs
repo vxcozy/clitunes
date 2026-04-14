@@ -1,8 +1,20 @@
 //! Bridge between librespot's `Sink` trait and clitunes' `PcmWriter` trait.
 //!
 //! [`SpotifySink`] receives decoded PCM from librespot at 44100 Hz,
-//! resamples to 48000 Hz via rubato, and pushes `StereoFrame` slices
-//! through an `mpsc::SyncSender` to the blocking source thread.
+//! resamples to the daemon's target sample rate via rubato, and pushes
+//! `StereoFrame` slices through an `mpsc::SyncSender` to the blocking
+//! source thread.
+//!
+//! # Sample rate
+//!
+//! The target rate is **not fixed**. The daemon probes the audio device's
+//! native rate at startup and runs the entire pipeline (ring, decoders,
+//! SPMC bridge) at that rate so no second resample pass is ever needed.
+//! On 44.1 kHz hardware that means the sink becomes a near-identity pass
+//! (44100→44100, which rubato handles correctly); on 48 kHz hardware the
+//! sink upsamples. Passing a stale 48 kHz target to a 44.1 kHz device
+//! caused the pitch-shift regression that motivated making this
+//! configurable.
 
 use std::sync::mpsc::SyncSender;
 use std::sync::Arc;
@@ -31,18 +43,29 @@ const DEFAULT_CHUNK_SIZE: usize = 1024;
 /// thread. When full, `SyncSender::send` blocks, preventing OOM.
 const CHANNEL_CAPACITY: usize = 32;
 
-/// Creates a new `(SpotifySink, std::sync::mpsc::Receiver<Vec<StereoFrame>>)` pair.
+/// librespot delivers decoded PCM at 44.1 kHz for Ogg Vorbis tracks
+/// (the codec Spotify streams to its premium clients). The sink
+/// resamples from this rate to the caller's `target_rate`.
+const SPOTIFY_SOURCE_RATE: u32 = 44_100;
+
+/// Creates a new `(SpotifySink, std::sync::mpsc::Receiver<Vec<StereoFrame>>)` pair
+/// that resamples librespot's 44.1 kHz output to `target_rate` Hz.
 ///
 /// The receiver should be consumed by the source thread that feeds the daemon
-/// audio pipeline. The sink is handed to librespot's player.
-pub fn channel() -> (
+/// audio pipeline. The sink is handed to librespot's player. `target_rate` should
+/// match the PCM ring / audio device rate — passing 48 kHz to a 44.1 kHz device
+/// pipeline causes a pitch-shift regression because no one downsamples the
+/// mismatch downstream.
+pub fn channel(
+    target_rate: u32,
+) -> (
     SpotifySink,
     std::sync::mpsc::Receiver<Vec<StereoFrame>>,
     Arc<Notify>,
 ) {
     let (tx, rx) = std::sync::mpsc::sync_channel(CHANNEL_CAPACITY);
     let notify = Arc::new(Notify::new());
-    let mut sink = SpotifySink::new();
+    let mut sink = SpotifySink::new(target_rate);
     sink.set_sender(tx);
     sink.pcm_notify = Some(Arc::clone(&notify));
     (sink, rx, notify)
@@ -59,10 +82,13 @@ pub struct SpotifySink {
     /// Reusable output buffer for resampled frames.
     output_buf: Vec<StereoFrame>,
     chunk_size: usize,
+    /// Output rate the resampler is configured for. Matches the daemon
+    /// PCM ring and audio device rate — see module docs.
+    target_rate: u32,
 }
 
 impl SpotifySink {
-    fn new() -> Self {
+    fn new(target_rate: u32) -> Self {
         Self {
             tx: None,
             pcm_notify: None,
@@ -72,6 +98,7 @@ impl SpotifySink {
             channel_bufs: vec![Vec::new(), Vec::new()],
             output_buf: Vec::new(),
             chunk_size: DEFAULT_CHUNK_SIZE,
+            target_rate,
         }
     }
 
@@ -80,8 +107,10 @@ impl SpotifySink {
         self.tx = Some(tx);
     }
 
-    /// Build the rubato `Async` sinc resampler (44100 -> 48000 Hz, stereo).
-    fn build_resampler(chunk_size: usize) -> Result<Async<f64>, SinkError> {
+    /// Build the rubato `Async` sinc resampler (44100 Hz → `target_rate` Hz,
+    /// stereo). When `target_rate == 44_100` the ratio is 1:1 and rubato
+    /// still produces a correct identity pass.
+    fn build_resampler(chunk_size: usize, target_rate: u32) -> Result<Async<f64>, SinkError> {
         let params = SincInterpolationParameters {
             sinc_len: 256,
             f_cutoff: 0.95,
@@ -90,7 +119,7 @@ impl SpotifySink {
             window: WindowFunction::BlackmanHarris2,
         };
         Async::<f64>::new_sinc(
-            48_000.0 / 44_100.0,
+            target_rate as f64 / SPOTIFY_SOURCE_RATE as f64,
             2.0,
             &params,
             chunk_size,
@@ -222,14 +251,19 @@ impl SpotifySink {
 }
 
 impl Open for SpotifySink {
+    /// Required by the librespot `Open` trait but not used in our path
+    /// — callers construct the sink via [`channel`] with an explicit
+    /// target rate. librespot never calls this in our embedding, but it
+    /// compiles-requires a default. Picks 48 kHz as a reasonable
+    /// fallback; any real use always goes through `channel()`.
     fn open(_device: Option<String>, _format: LibrespotAudioFormat) -> Self {
-        Self::new()
+        Self::new(48_000)
     }
 }
 
 impl Sink for SpotifySink {
     fn start(&mut self) -> SinkResult<()> {
-        self.resampler = Some(Self::build_resampler(self.chunk_size)?);
+        self.resampler = Some(Self::build_resampler(self.chunk_size, self.target_rate)?);
         self.accum_l.clear();
         self.accum_r.clear();
         Ok(())
@@ -272,9 +306,15 @@ mod tests {
     use std::sync::mpsc;
 
     /// Helper: create a sink wired to a receiver, with start() already called.
+    /// Uses the historical 48 kHz target so the existing ratio tests still
+    /// exercise resampling rather than a 1:1 pass.
     fn test_sink() -> (SpotifySink, mpsc::Receiver<Vec<StereoFrame>>) {
+        test_sink_at(48_000)
+    }
+
+    fn test_sink_at(target_rate: u32) -> (SpotifySink, mpsc::Receiver<Vec<StereoFrame>>) {
         let (tx, rx) = mpsc::sync_channel(CHANNEL_CAPACITY);
-        let mut sink = SpotifySink::new();
+        let mut sink = SpotifySink::new(target_rate);
         sink.set_sender(tx);
         sink.start().expect("start should succeed");
         (sink, rx)
@@ -436,7 +476,46 @@ mod tests {
     }
 
     // ---------------------------------------------------------------
-    // 5. Start/stop lifecycle: no panic when no writes occur.
+    // 5. 44.1 kHz target is a near-identity pass (pitch-shift regression
+    //    guard): with target_rate == 44100, output frame count ≈ input.
+    //    If the resampler were still wired for a fixed 48 kHz output we'd
+    //    see ~8.8% more frames, which on a 44.1 kHz device plays ~1
+    //    semitone high.
+    // ---------------------------------------------------------------
+    #[test]
+    fn target_rate_44100_is_identity_pass() {
+        let (mut sink, rx) = test_sink_at(44_100);
+        let mut converter = test_converter();
+
+        let num_input_frames: usize = 4096;
+        let samples: Vec<f64> = (0..num_input_frames * 2)
+            .map(|i| {
+                let frame_idx = i / 2;
+                let t = frame_idx as f64 / 44_100.0;
+                (t * 440.0 * std::f64::consts::TAU).sin() * 0.5
+            })
+            .collect();
+
+        sink.write(AudioPacket::Samples(samples), &mut converter)
+            .expect("write should succeed");
+        sink.stop().expect("stop should succeed");
+
+        let output = drain_rx(&rx);
+        // rubato sinc resamplers have a small group-delay priming cost,
+        // but the drained total (including flush) should land within a
+        // few frames of the input count.
+        let diff = (output.len() as isize - num_input_frames as isize).unsigned_abs();
+        assert!(
+            diff <= 4,
+            "44.1 kHz target should be identity: got {} frames vs {} input (diff = {})",
+            output.len(),
+            num_input_frames,
+            diff,
+        );
+    }
+
+    // ---------------------------------------------------------------
+    // 6. Start/stop lifecycle: no panic when no writes occur.
     // ---------------------------------------------------------------
     #[test]
     fn start_stop_no_panic() {

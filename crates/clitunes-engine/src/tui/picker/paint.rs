@@ -691,6 +691,7 @@ fn write_centered(
         let pad = (inner_w - count) / 2;
         write_text(grid, inner_x0 + pad, y, text, fg, bg);
     } else {
+        // Truncate with ellipsis to fit within the modal.
         let truncated = truncate_or_pad(text, inner_w as usize);
         write_text(grid, inner_x0, y, &truncated, fg, bg);
     }

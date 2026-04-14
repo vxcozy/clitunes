@@ -20,11 +20,19 @@ pub struct ControlSession {
 
 impl ControlSession {
     pub async fn connect(socket_path: &Path) -> Result<Self> {
+        // "browse" is in the default subscription list so `Search`,
+        // `BrowseLibrary`, and `BrowsePlaylist` result events reach
+        // both the TUI (Search/Library tabs) and headless CLI
+        // (`clitunes search`, `clitunes browse`). The daemon drops
+        // broadcasts for unsubscribed topics, so omitting this meant
+        // browse verbs timed out waiting for results that were produced
+        // but never delivered.
         let subscriptions = vec![
             "state".into(),
             "now_playing".into(),
             "pcm_meta".into(),
             "errors".into(),
+            "browse".into(),
         ];
         let client = ControlClient::connect(socket_path, "clitunes-tui", subscriptions).await?;
         Ok(Self { client })

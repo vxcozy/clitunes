@@ -31,7 +31,7 @@ use rspotify::{
     AuthCodePkceSpotify, Config, Credentials, OAuth,
 };
 
-use super::auth::{SPOTIFY_CLIENT_ID, SPOTIFY_REDIRECT_URI, SPOTIFY_SCOPES};
+use super::auth::{spotify_client_id, SPOTIFY_REDIRECT_URI, SPOTIFY_SCOPES};
 use super::token::SharedTokenProvider;
 
 /// Default page size when callers don't specify one. Kept modest so
@@ -52,7 +52,7 @@ impl SpotifyWebApi {
     pub fn from_provider(provider: &SharedTokenProvider) -> Self {
         let token = provider.rspotify_token();
 
-        let creds = Credentials::new_pkce(SPOTIFY_CLIENT_ID);
+        let creds = Credentials::new_pkce(&spotify_client_id());
         let oauth = OAuth {
             redirect_uri: SPOTIFY_REDIRECT_URI.to_string(),
             scopes: SPOTIFY_SCOPES.iter().map(|s| (*s).into()).collect(),

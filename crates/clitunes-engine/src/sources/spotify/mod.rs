@@ -16,7 +16,7 @@ pub mod webapi;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
 use librespot_core::config::SessionConfig;
@@ -71,6 +71,17 @@ impl SpotifySource {
             event_tx,
             target_sample_rate,
         }
+    }
+
+    /// Resampler target rate this source will hand to the sink.
+    ///
+    /// Exposed to the crate so the daemon's wiring test can pin that
+    /// `run_source_pipeline` threads the probed device rate through —
+    /// the sink's own identity-pass test can't catch a caller-side
+    /// regression that hardcodes 48 kHz.
+    #[cfg(test)]
+    pub(crate) fn target_sample_rate(&self) -> u32 {
+        self.target_sample_rate
     }
 }
 
@@ -219,6 +230,24 @@ async fn run_spotify_playback(
     // 8. Track last known position for resume after reconnect.
     let mut last_position_ms: u32 = 0;
 
+    // Wall-clock pacing state. librespot downloads the encrypted track in
+    // one burst and then decodes at ~40× realtime, flooding the SyncSender
+    // and ring with no natural backpressure (the downstream writer drops
+    // oldest on overrun — see `PcmRingWriter::write`). Without pacing the
+    // cpal callback ends up reading chopped-up fragments and the output
+    // sounds like heavily corrupted audio. Matching ToneSource's pattern,
+    // the source self-paces: after each drain we sleep until the wall
+    // clock catches up with the frames we've written, capped so the ring
+    // never holds more than `MAX_AHEAD` of lookahead.
+    //
+    // Reset on pause/idle so resume doesn't burst — otherwise the pacing
+    // clock drifts forward during the gap and we'd immediately write a
+    // second's worth of frames on the next Playing event.
+    const MAX_AHEAD: Duration = Duration::from_millis(400);
+    const PACING_MARGIN: Duration = Duration::from_millis(150);
+    let mut pace_start: Option<Instant> = None;
+    let mut pace_frames: u64 = 0;
+
     // 9. PCM drain + event monitoring loop.
     // `writer` isn't Send so we can't move it into a spawned task —
     // everything runs in the same task, woken by `tokio::select!`.
@@ -236,6 +265,11 @@ async fn run_spotify_playback(
         loop {
             match pcm_rx.try_recv() {
                 Ok(frames) => {
+                    if pace_start.is_none() {
+                        pace_start = Some(Instant::now());
+                        pace_frames = 0;
+                    }
+                    pace_frames += frames.len() as u64;
                     writer.write(&frames);
                 }
                 Err(std::sync::mpsc::TryRecvError::Empty) => break,
@@ -243,6 +277,22 @@ async fn run_spotify_playback(
                     debug!("spotify: PCM channel disconnected");
                     break;
                 }
+            }
+        }
+
+        // Wall-clock pace: if we've buffered more than MAX_AHEAD, sleep
+        // until we're back within PACING_MARGIN. This yields, so librespot
+        // can keep decoding into the (now-stalled) SyncSender — which then
+        // blocks librespot's own sink.write once full, providing the
+        // backpressure we actually need.
+        if let Some(start) = pace_start {
+            let played =
+                Duration::from_secs_f64(pace_frames as f64 / f64::from(target_sample_rate));
+            let real = start.elapsed();
+            if played > real + MAX_AHEAD {
+                let sleep_for = played - real - PACING_MARGIN;
+                tokio::time::sleep(sleep_for).await;
+                continue;
             }
         }
 
@@ -261,6 +311,8 @@ async fn run_spotify_playback(
                             }
                             PlayerEvent::Paused { position_ms, .. } => {
                                 last_position_ms = position_ms;
+                                pace_start = None;
+                                pace_frames = 0;
                             }
                             PlayerEvent::EndOfTrack { .. } => {
                                 info!("spotify: end of track");
@@ -303,6 +355,8 @@ async fn run_spotify_playback(
                             }
                             PlayerEvent::SessionDisconnected { .. } => {
                                 warn!("spotify: session disconnected, attempting reconnect");
+                                pace_start = None;
+                                pace_frames = 0;
                                 if let Err(e) = attempt_reconnect(&session, cred_path).await {
                                     error!(error = %e, "spotify: reconnect failed");
                                     let _ = event_tx

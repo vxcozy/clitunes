@@ -32,8 +32,8 @@ pub mod socket_security;
 pub mod tee_writer;
 
 pub use config::{
-    config_path_from_env, default_config_path, resolve_config_path, BindMode, ConnectConfig,
-    DaemonConfig, CONFIG_PATH_ENV,
+    default_config_path, resolve_config_path, BindMode, ConnectConfig, DaemonConfig,
+    CONFIG_PATH_ENV,
 };
 pub use idle_timer::{Clock, IdleState, IdleTimer, SystemClock, Tick, DEFAULT_IDLE_WINDOW};
 pub use lifecycle::{

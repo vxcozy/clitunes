@@ -74,12 +74,20 @@ fn run() -> Result<ExitCode> {
     );
 
     let config = DaemonConfig::load(None).context("load daemon config")?;
-    tracing::info!(
-        target: "clitunesd",
-        connect_enabled = config.connect.enabled,
-        connect_name = %config.connect.name,
-        "daemon config loaded",
-    );
+    tracing::info!(target: "clitunesd", "daemon config loaded");
+    if config.connect.enabled {
+        // The receiver isn't wired up yet (arrives in a later v1.2 unit).
+        // Warn loudly so a user who set `enabled = true` from the config
+        // reference doesn't conclude it's working just because startup
+        // was quiet.
+        tracing::warn!(
+            target: "clitunesd",
+            connect_name = %config.connect.name,
+            "connect.enabled=true in daemon config, but the Spotify Connect \
+             receiver is not yet implemented in this build — the setting is \
+             ignored until the receiver lands",
+        );
+    }
 
     let pid_path = runtime.join("clitunesd.pid");
     let pid = unsafe { libc::getpid() };

@@ -217,15 +217,6 @@ pub fn resolve_config_path(
     default
 }
 
-/// Reads `$CLITUNES_CONFIG` and returns a non-empty path if set.
-/// Trimmed so a stray trailing newline from `env $(cat cfg.env)` paths
-/// does not become a "file not found" surprise. Kept as a thin wrapper
-/// over [`resolve_config_path`] for callers that only want the env
-/// tier.
-pub fn config_path_from_env() -> Option<PathBuf> {
-    resolve_config_path(None, std::env::var_os(CONFIG_PATH_ENV), None)
-}
-
 /// Default config path: `<config_dir>/clitunes/daemon.toml`. Returns
 /// `None` on platforms where `dirs` cannot resolve a config directory
 /// (extremely rare on the platforms we target, but not worth panicking

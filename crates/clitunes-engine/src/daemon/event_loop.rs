@@ -130,6 +130,19 @@ impl DaemonEventLoop {
 
         let last_state: Arc<Mutex<Option<Event>>> = Arc::new(Mutex::new(None));
 
+        // One shared Spotify handle per daemon: owned by the source pipeline
+        // (for playback sessions) and the Web API cache (for token providers).
+        // Funnels both paths through a single `load_credentials` call so the
+        // on-disk refresh_token can't get rotated twice concurrently.
+        #[cfg(feature = "spotify")]
+        let spotify_handle = {
+            let cred_path = crate::sources::spotify::default_credentials_path()
+                .unwrap_or_else(|| std::path::PathBuf::from("/tmp/clitunes-spotify-creds.json"));
+            Arc::new(crate::sources::spotify::SpotifyHandle::new(cred_path))
+        };
+        #[cfg(feature = "spotify")]
+        let source_spotify_handle = Arc::clone(&spotify_handle);
+
         let source_stop = Arc::clone(&self.stop);
         let source_event_tx = event_tx.clone();
         let source_last_state = Arc::clone(&last_state);
@@ -143,6 +156,8 @@ impl DaemonEventLoop {
                     source_event_tx,
                     source_last_state,
                     format,
+                    #[cfg(feature = "spotify")]
+                    source_spotify_handle,
                 );
             })
             .context("spawn source pipeline")?;
@@ -152,7 +167,7 @@ impl DaemonEventLoop {
         let verb_ev_tx = event_tx.clone();
         let verb_last_state = Arc::clone(&last_state);
         #[cfg(feature = "webapi")]
-        let webapi_cache = Arc::new(WebApiCache::new());
+        let webapi_cache = Arc::new(WebApiCache::new(Arc::clone(&spotify_handle)));
         #[cfg(feature = "webapi")]
         let verb_webapi = Arc::clone(&webapi_cache);
         tokio::spawn(async move {
@@ -222,6 +237,7 @@ fn run_source_pipeline(
     event_tx: mpsc::Sender<Event>,
     last_state: Arc<Mutex<Option<Event>>>,
     format: PcmFormat,
+    #[cfg(feature = "spotify")] spotify_handle: Arc<crate::sources::spotify::SpotifyHandle>,
 ) {
     let pending: Arc<Mutex<Option<SourceCommand>>> = Arc::new(Mutex::new(None));
     let source_stop = Arc::new(AtomicBool::new(false));
@@ -339,12 +355,12 @@ fn run_source_pipeline(
             },
             #[cfg(feature = "spotify")]
             SourceKind::Spotify(ref uri) => {
-                let cred_path =
-                    crate::sources::spotify::default_credentials_path().unwrap_or_else(|| {
-                        std::path::PathBuf::from("/tmp/clitunes-spotify-creds.json")
-                    });
-                let mut spotify =
-                    build_spotify_source(uri.clone(), cred_path, event_tx.clone(), &format);
+                let mut spotify = build_spotify_source(
+                    uri.clone(),
+                    Arc::clone(&spotify_handle),
+                    event_tx.clone(),
+                    &format,
+                );
                 send_state(Event::StateChanged {
                     state: PlayState::Playing,
                     source: Some("spotify".into()),
@@ -394,11 +410,11 @@ enum SourceKind {
 #[cfg(feature = "spotify")]
 fn build_spotify_source(
     uri: String,
-    cred_path: std::path::PathBuf,
+    handle: Arc<crate::sources::spotify::SpotifyHandle>,
     event_tx: mpsc::Sender<Event>,
     format: &PcmFormat,
 ) -> SpotifySource {
-    SpotifySource::new(uri, cred_path, event_tx, format.sample_rate)
+    SpotifySource::new(uri, handle, event_tx, format.sample_rate)
 }
 
 async fn dispatch_verbs(
@@ -607,13 +623,19 @@ async fn dispatch_verbs(
 /// build, N readers) without adding a separate build-barrier.
 #[cfg(feature = "webapi")]
 pub(crate) struct WebApiCache {
+    /// Shared Spotify auth state. The cache asks the handle for a fresh
+    /// [`SharedTokenProvider`] on first build — by reusing the handle's
+    /// cached `AuthResult`, the Web API build path no longer races the
+    /// source pipeline on `credentials.json` rotation.
+    handle: Arc<crate::sources::spotify::SpotifyHandle>,
     client: tokio::sync::Mutex<Option<Arc<crate::sources::spotify::webapi::SpotifyWebApi>>>,
 }
 
 #[cfg(feature = "webapi")]
 impl WebApiCache {
-    pub(crate) fn new() -> Self {
+    pub(crate) fn new(handle: Arc<crate::sources::spotify::SpotifyHandle>) -> Self {
         Self {
+            handle,
             client: tokio::sync::Mutex::new(None),
         }
     }
@@ -627,7 +649,7 @@ impl WebApiCache {
         if let Some(existing) = guard.as_ref() {
             return Ok(Arc::clone(existing));
         }
-        let api = Arc::new(build_webapi().await?);
+        let api = Arc::new(build_webapi(&self.handle).await?);
         *guard = Some(Arc::clone(&api));
         Ok(api)
     }
@@ -657,23 +679,20 @@ impl WebApiCache {
     }
 }
 
-/// Load the cached OAuth credentials from disk and build a fresh
-/// [`SpotifyWebApi`] client. The filesystem read + token refresh run
-/// on a blocking pool so the dispatcher doesn't stall while the daemon
-/// is I/O bound. Called at most once per `WebApiCache` lifetime unless
+/// Build a fresh [`SpotifyWebApi`] client from the shared Spotify handle.
+/// Asks the handle for a token provider — the handle's first call lazily
+/// loads `credentials.json` on the blocking pool; subsequent calls reuse
+/// the cached auth. Invoked at most once per `WebApiCache` lifetime unless
 /// invalidated by a hard auth failure.
 #[cfg(feature = "webapi")]
-async fn build_webapi() -> Result<crate::sources::spotify::webapi::SpotifyWebApi> {
-    use crate::sources::spotify::{self, token::SharedTokenProvider, webapi::SpotifyWebApi};
-    let cred_path = spotify::default_credentials_path()
-        .context("resolve spotify credentials path (set $HOME?)")?;
-    let cred_path_clone = cred_path.clone();
-    let auth_result =
-        tokio::task::spawn_blocking(move || spotify::load_credentials(&cred_path_clone))
-            .await
-            .context("credential task panicked")?
-            .context("load spotify credentials")?;
-    let provider = SharedTokenProvider::new(auth_result.token, cred_path);
+async fn build_webapi(
+    handle: &crate::sources::spotify::SpotifyHandle,
+) -> Result<crate::sources::spotify::webapi::SpotifyWebApi> {
+    use crate::sources::spotify::webapi::SpotifyWebApi;
+    let provider = handle
+        .token_provider()
+        .await
+        .context("build spotify token provider")?;
     Ok(SpotifyWebApi::from_provider(&provider))
 }
 
@@ -952,7 +971,9 @@ mod webapi_cache_tests {
 
     #[tokio::test]
     async fn invalidate_drops_a_seeded_client() {
-        let cache = WebApiCache::new();
+        let cache = WebApiCache::new(Arc::new(crate::sources::spotify::SpotifyHandle::new(
+            std::path::PathBuf::from("/tmp/clitunes-test-webapi-handle.json"),
+        )));
         assert!(!cache.is_cached().await, "fresh cache should be empty");
 
         cache.seed_for_test(synthetic_webapi()).await;
@@ -969,7 +990,9 @@ mod webapi_cache_tests {
     async fn invalidate_on_empty_cache_is_a_noop() {
         // Regression guard: invalidate must not deadlock or panic when
         // the cache is already empty.
-        let cache = WebApiCache::new();
+        let cache = WebApiCache::new(Arc::new(crate::sources::spotify::SpotifyHandle::new(
+            std::path::PathBuf::from("/tmp/clitunes-test-webapi-handle.json"),
+        )));
         cache.invalidate().await;
         cache.invalidate().await;
         assert!(!cache.is_cached().await);
@@ -999,12 +1022,11 @@ mod spotify_wiring_tests {
             sample_rate: 44_100,
             channels: 2,
         };
-        let source = build_spotify_source(
-            "spotify:track:doesnt:matter".into(),
+        let handle = Arc::new(crate::sources::spotify::SpotifyHandle::new(
             std::path::PathBuf::from("/tmp/clitunes-test-creds.json"),
-            tx,
-            &format,
-        );
+        ));
+        let source =
+            build_spotify_source("spotify:track:doesnt:matter".into(), handle, tx, &format);
         assert_eq!(
             source.target_sample_rate(),
             44_100,
@@ -1019,12 +1041,11 @@ mod spotify_wiring_tests {
             sample_rate: 48_000,
             channels: 2,
         };
-        let source = build_spotify_source(
-            "spotify:track:doesnt:matter".into(),
+        let handle = Arc::new(crate::sources::spotify::SpotifyHandle::new(
             std::path::PathBuf::from("/tmp/clitunes-test-creds.json"),
-            tx,
-            &format,
-        );
+        ));
+        let source =
+            build_spotify_source("spotify:track:doesnt:matter".into(), handle, tx, &format);
         assert_eq!(source.target_sample_rate(), 48_000);
     }
 
@@ -1037,12 +1058,11 @@ mod spotify_wiring_tests {
             sample_rate: 96_000,
             channels: 2,
         };
-        let source = build_spotify_source(
-            "spotify:track:doesnt:matter".into(),
+        let handle = Arc::new(crate::sources::spotify::SpotifyHandle::new(
             std::path::PathBuf::from("/tmp/clitunes-test-creds.json"),
-            tx,
-            &format,
-        );
+        ));
+        let source =
+            build_spotify_source("spotify:track:doesnt:matter".into(), handle, tx, &format);
         assert_eq!(source.target_sample_rate(), 96_000);
     }
 }

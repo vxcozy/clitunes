@@ -225,6 +225,35 @@ impl SpotifyHandle {
         })
     }
 
+    /// Initialise the Player + Session singleton (if needed) and return
+    /// shared clones. Unlike [`start_playback`](Self::start_playback) this
+    /// does *not* bind a PCM consumer onto the sink — the singleton's sink
+    /// remains unbound until some other caller takes it.
+    ///
+    /// Used by the Spotify Connect runtime, which needs a Player + Session
+    /// to construct `Spirc` at daemon boot but doesn't itself drain PCM.
+    /// The `ConnectSource` running in the source pipeline is the one that
+    /// binds the sink, so the two halves are deliberately decoupled.
+    ///
+    /// Same `target_rate` constraint as `start_playback`: the rate is
+    /// locked at first init and a mismatched later call is an error.
+    #[cfg(feature = "connect")]
+    pub async fn ensure_player_and_session(
+        &self,
+        target_rate: u32,
+    ) -> Result<(Arc<Player>, Session)> {
+        let state = self.ensure_playback_state(target_rate).await?;
+        if state.target_rate != target_rate {
+            anyhow::bail!(
+                "spotify: playback state was initialised at {} Hz but called at {} Hz — \
+                 the device rate must not change during a daemon lifetime",
+                state.target_rate,
+                target_rate
+            );
+        }
+        Ok((Arc::clone(&state.player), state.session.clone()))
+    }
+
     /// Force a fresh credential load and reconnect the shared Session.
     /// Used on `PlayerEvent::SessionDisconnected` — 3 attempts with
     /// 1s/2s/4s backoff, force-refreshing auth on each attempt because
@@ -457,6 +486,23 @@ mod tests {
         let handle = test_handle("/tmp/clitunes-test-handle-missing-tp.json");
         let err = match handle.token_provider().await {
             Ok(_) => panic!("token_provider() should fail with no cached credentials"),
+            Err(e) => e,
+        };
+        assert!(
+            format!("{err:#}").contains("no cached Spotify credentials"),
+            "unexpected error: {err:#}"
+        );
+    }
+
+    #[cfg(feature = "connect")]
+    #[tokio::test]
+    async fn ensure_player_and_session_fails_fast_without_credentials() {
+        // ConnectRuntime calls this at daemon boot. With no cached
+        // credentials it should surface the same auth error as
+        // start_playback rather than panicking or hanging.
+        let handle = test_handle("/tmp/clitunes-test-handle-eps-no-creds.json");
+        let err = match handle.ensure_player_and_session(48_000).await {
+            Ok(_) => panic!("ensure_player_and_session should fail with no cached credentials"),
             Err(e) => e,
         };
         assert!(

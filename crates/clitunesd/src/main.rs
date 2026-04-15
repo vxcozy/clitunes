@@ -75,17 +75,23 @@ fn run() -> Result<ExitCode> {
 
     let config = DaemonConfig::load(None).context("load daemon config")?;
     tracing::info!(target: "clitunesd", "daemon config loaded");
+    #[cfg(not(feature = "connect"))]
     if config.connect.enabled {
-        // The receiver isn't wired up yet (arrives in a later v1.2 unit).
-        // Warn loudly so a user who set `enabled = true` from the config
-        // reference doesn't conclude it's working just because startup
-        // was quiet.
         tracing::warn!(
             target: "clitunesd",
             connect_name = %config.connect.name,
-            "connect.enabled=true in daemon config, but the Spotify Connect \
-             receiver is not yet implemented in this build — the setting is \
-             ignored until the receiver lands",
+            "connect.enabled=true in daemon config, but this binary was \
+             built without the `connect` feature — the setting is ignored",
+        );
+    }
+    #[cfg(feature = "connect")]
+    if config.connect.enabled {
+        tracing::info!(
+            target: "clitunesd",
+            connect_name = %config.connect.name,
+            connect_bind = ?config.connect.bind,
+            connect_port = config.connect.port,
+            "spotify connect receiver will start with event loop",
         );
     }
 
@@ -110,7 +116,8 @@ fn run() -> Result<ExitCode> {
         .build()
         .context("build tokio runtime")?;
 
-    let event_loop = DaemonEventLoop::new(socket_path, Arc::clone(&idle), Arc::clone(&stop));
+    let event_loop =
+        DaemonEventLoop::new(socket_path, Arc::clone(&idle), Arc::clone(&stop), config);
     let result = rt.block_on(event_loop.run());
 
     if let Err(e) = &result {

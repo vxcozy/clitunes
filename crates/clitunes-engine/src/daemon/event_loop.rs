@@ -22,6 +22,7 @@ use crate::sources::spotify::SpotifySource;
 use crate::sources::tone_source::ToneSource;
 use crate::sources::Source;
 
+use super::config::DaemonConfig;
 use super::tee_writer::TeeWriter;
 use super::IdleTimer;
 
@@ -31,6 +32,10 @@ pub struct DaemonEventLoop {
     socket_path: std::path::PathBuf,
     idle: Arc<IdleTimer>,
     stop: Arc<AtomicBool>,
+    /// Daemon config; only the `connect` section is consumed today, so
+    /// builds without the `connect` feature will flag this as unread.
+    #[cfg_attr(not(feature = "connect"), allow(dead_code))]
+    config: DaemonConfig,
 }
 
 impl DaemonEventLoop {
@@ -38,11 +43,13 @@ impl DaemonEventLoop {
         socket_path: std::path::PathBuf,
         idle: Arc<IdleTimer>,
         stop: Arc<AtomicBool>,
+        config: DaemonConfig,
     ) -> Self {
         Self {
             socket_path,
             idle,
             stop,
+            config,
         }
     }
 
@@ -165,6 +172,47 @@ impl DaemonEventLoop {
             })
             .context("spawn source pipeline")?;
 
+        // Spawn the Spotify Connect receiver if configured. ConnectRuntime
+        // survives source-pipeline transitions (phone re-picks reuse the
+        // same mDNS advertisement); the source_cmd_tx clone lets it push
+        // `PlayConnect` into the pipeline when credentials first arrive.
+        #[cfg(feature = "connect")]
+        let connect_runtime = if self.config.connect.enabled {
+            let connect_source_cmd_tx = source_cmd_tx.clone();
+            let connect_event_tx = event_tx.clone();
+            match crate::sources::spotify::ConnectRuntime::spawn(
+                self.config.connect.clone(),
+                Arc::clone(&spotify_handle),
+                device_rate,
+                connect_source_cmd_tx,
+                connect_event_tx,
+                tokio::runtime::Handle::current(),
+            ) {
+                Ok(rt) => Some(rt),
+                Err(e) => {
+                    // Connect receiver failed to advertise (commonly: mDNS
+                    // port collision or privileged-port bind). The daemon
+                    // stays up so local/radio/spotify-URI playback still
+                    // work; only the Connect receiver is off for this run.
+                    tracing::error!(
+                        target: "clitunesd",
+                        error = %e,
+                        "connect: receiver startup failed; daemon continuing without it"
+                    );
+                    let _ = event_tx
+                        .send(Event::SourceError {
+                            source: "connect".into(),
+                            error: format!("connect startup failed: {e}"),
+                            error_code: None,
+                        })
+                        .await;
+                    None
+                }
+            }
+        } else {
+            None
+        };
+
         let pcm_tap = pcm_tap_event.clone();
         let verb_stop = Arc::clone(&self.stop);
         let verb_ev_tx = event_tx.clone();
@@ -211,6 +259,16 @@ impl DaemonEventLoop {
         }
 
         self.stop.store(true, Ordering::SeqCst);
+
+        // Shut down the Connect receiver before the source thread so
+        // Spirc's outbound traffic stops before the sink is torn down.
+        #[cfg(feature = "connect")]
+        if let Some(rt) = connect_runtime {
+            if let Err(e) = rt.shutdown().await {
+                tracing::warn!(target: "clitunesd", error = %e, "connect: runtime shutdown error");
+            }
+        }
+
         let _ = source_thread.join();
         drop(region);
         Ok(())
@@ -218,7 +276,7 @@ impl DaemonEventLoop {
 }
 
 #[allow(dead_code, clippy::enum_variant_names)]
-enum SourceCommand {
+pub(crate) enum SourceCommand {
     PlayTone,
     PlayRadio {
         station: Station,
@@ -231,6 +289,14 @@ enum SourceCommand {
     PlaySpotify {
         uri: String,
     },
+    /// Switch the source pipeline into passive Connect mode. Carries no
+    /// payload because Spotify Connect drives the Player externally
+    /// (Spirc owns track lifecycle); the source pipeline only binds the
+    /// shared sink and pumps PCM until interrupted by a stop or another
+    /// `Play*` command. Emitted by `ConnectRuntime` on first credential
+    /// yield, never directly by a client verb.
+    #[cfg(feature = "connect")]
+    PlayConnect,
 }
 
 fn run_source_pipeline(
@@ -373,6 +439,21 @@ fn run_source_pipeline(
                 });
                 spotify.run(&mut tee, &source_stop);
             }
+            #[cfg(feature = "connect")]
+            SourceKind::Connect => {
+                send_state(Event::StateChanged {
+                    state: PlayState::Playing,
+                    source: Some("connect".into()),
+                    station_or_path: None,
+                    position_secs: None,
+                    duration_secs: None,
+                });
+                let mut connect = crate::sources::spotify::ConnectSource::new(
+                    Arc::clone(&spotify_handle),
+                    format.sample_rate,
+                );
+                connect.run(&mut tee, &source_stop);
+            }
         }
 
         if stop.load(Ordering::Relaxed) {
@@ -387,6 +468,8 @@ fn run_source_pipeline(
                 SourceCommand::PlayLocal { paths } => current = SourceKind::Local(paths),
                 #[cfg(feature = "spotify")]
                 SourceCommand::PlaySpotify { uri } => current = SourceKind::Spotify(uri),
+                #[cfg(feature = "connect")]
+                SourceCommand::PlayConnect => current = SourceKind::Connect,
             }
         }
     }
@@ -401,6 +484,12 @@ enum SourceKind {
     Local(Vec<std::path::PathBuf>),
     #[cfg(feature = "spotify")]
     Spotify(String),
+    /// Spotify Connect: the daemon is the receiver, Spirc owns the
+    /// Player (track lifecycle, play/pause/seek), and the source pipeline
+    /// only binds the shared sink and forwards PCM. Carries no payload —
+    /// the active credentials live inside `ConnectRuntime`.
+    #[cfg(feature = "connect")]
+    Connect,
 }
 
 /// Construct a [`SpotifySource`] whose resampler target matches the

@@ -52,6 +52,8 @@ connect = [
     "spotify",
     "dep:librespot-connect",
     "dep:librespot-discovery",
+    "dep:futures-util",
+    "dep:tokio",
 ]
 # Spotify Web API: search, library, playlists via rspotify. Daemon-safe
 # (no image/TUI deps). Requires `spotify` for shared auth infrastructure.

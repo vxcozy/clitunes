@@ -9,10 +9,14 @@
 //! relies on the guard's `Drop` to tear the binding back down cleanly.
 
 pub mod auth;
+#[cfg(feature = "connect")]
+pub mod connect;
 pub mod handle;
 pub mod sink;
 
 pub use auth::{default_credentials_path, load_credentials, load_or_authenticate, AuthResult};
+#[cfg(feature = "connect")]
+pub use connect::{ConnectRuntime, ConnectSource};
 pub use handle::{PlaybackGuard, SpotifyHandle};
 #[cfg(feature = "webapi")]
 pub mod token;

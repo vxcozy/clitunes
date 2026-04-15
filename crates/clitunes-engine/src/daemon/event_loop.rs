@@ -138,7 +138,10 @@ impl DaemonEventLoop {
         let spotify_handle = {
             let cred_path = crate::sources::spotify::default_credentials_path()
                 .unwrap_or_else(|| std::path::PathBuf::from("/tmp/clitunes-spotify-creds.json"));
-            Arc::new(crate::sources::spotify::SpotifyHandle::new(cred_path))
+            Arc::new(crate::sources::spotify::SpotifyHandle::new(
+                cred_path,
+                tokio::runtime::Handle::current(),
+            ))
         };
         #[cfg(feature = "spotify")]
         let source_spotify_handle = Arc::clone(&spotify_handle);
@@ -973,6 +976,7 @@ mod webapi_cache_tests {
     async fn invalidate_drops_a_seeded_client() {
         let cache = WebApiCache::new(Arc::new(crate::sources::spotify::SpotifyHandle::new(
             std::path::PathBuf::from("/tmp/clitunes-test-webapi-handle.json"),
+            tokio::runtime::Handle::current(),
         )));
         assert!(!cache.is_cached().await, "fresh cache should be empty");
 
@@ -992,6 +996,7 @@ mod webapi_cache_tests {
         // the cache is already empty.
         let cache = WebApiCache::new(Arc::new(crate::sources::spotify::SpotifyHandle::new(
             std::path::PathBuf::from("/tmp/clitunes-test-webapi-handle.json"),
+            tokio::runtime::Handle::current(),
         )));
         cache.invalidate().await;
         cache.invalidate().await;
@@ -1015,8 +1020,8 @@ mod spotify_wiring_tests {
     use super::*;
     use clitunes_core::PcmFormat;
 
-    #[test]
-    fn threads_44100_format_rate_to_source() {
+    #[tokio::test]
+    async fn threads_44100_format_rate_to_source() {
         let (tx, _rx) = mpsc::channel::<Event>(1);
         let format = PcmFormat {
             sample_rate: 44_100,
@@ -1024,6 +1029,7 @@ mod spotify_wiring_tests {
         };
         let handle = Arc::new(crate::sources::spotify::SpotifyHandle::new(
             std::path::PathBuf::from("/tmp/clitunes-test-creds.json"),
+            tokio::runtime::Handle::current(),
         ));
         let source =
             build_spotify_source("spotify:track:doesnt:matter".into(), handle, tx, &format);
@@ -1034,8 +1040,8 @@ mod spotify_wiring_tests {
         );
     }
 
-    #[test]
-    fn threads_48000_format_rate_to_source() {
+    #[tokio::test]
+    async fn threads_48000_format_rate_to_source() {
         let (tx, _rx) = mpsc::channel::<Event>(1);
         let format = PcmFormat {
             sample_rate: 48_000,
@@ -1043,14 +1049,15 @@ mod spotify_wiring_tests {
         };
         let handle = Arc::new(crate::sources::spotify::SpotifyHandle::new(
             std::path::PathBuf::from("/tmp/clitunes-test-creds.json"),
+            tokio::runtime::Handle::current(),
         ));
         let source =
             build_spotify_source("spotify:track:doesnt:matter".into(), handle, tx, &format);
         assert_eq!(source.target_sample_rate(), 48_000);
     }
 
-    #[test]
-    fn threads_96000_format_rate_to_source() {
+    #[tokio::test]
+    async fn threads_96000_format_rate_to_source() {
         // Exotic but legal hi-fi rate — proves the helper isn't
         // clamped/capped and genuinely passes the format field.
         let (tx, _rx) = mpsc::channel::<Event>(1);
@@ -1060,6 +1067,7 @@ mod spotify_wiring_tests {
         };
         let handle = Arc::new(crate::sources::spotify::SpotifyHandle::new(
             std::path::PathBuf::from("/tmp/clitunes-test-creds.json"),
+            tokio::runtime::Handle::current(),
         ));
         let source =
             build_spotify_source("spotify:track:doesnt:matter".into(), handle, tx, &format);

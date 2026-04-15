@@ -1,15 +1,19 @@
-//! Spotify playback via librespot (v1.1).
+//! Spotify playback via librespot.
 //!
-//! Provides [`SpotifySource`] — an implementation of the [`Source`](super::Source) trait
-//! that bridges librespot's decoded PCM output to the daemon's audio pipeline
-//! with 44100→48000 Hz resampling via rubato.
+//! Provides [`SpotifySource`] — an implementation of the [`Source`](super::Source)
+//! trait that drives a per-track playback loop against the daemon's shared
+//! [`SpotifyHandle`]. The handle owns a singleton `Player` + `Session` plus
+//! a rebindable sink (see the [`handle`] and [`sink`] modules); this source
+//! acquires a [`PlaybackGuard`] per track, loads the URI, pumps PCM from
+//! the sink into the daemon's ring at the probed device sample rate, and
+//! relies on the guard's `Drop` to tear the binding back down cleanly.
 
 pub mod auth;
 pub mod handle;
 pub mod sink;
 
 pub use auth::{default_credentials_path, load_credentials, load_or_authenticate, AuthResult};
-pub use handle::SpotifyHandle;
+pub use handle::{PlaybackGuard, SpotifyHandle};
 #[cfg(feature = "webapi")]
 pub mod token;
 #[cfg(feature = "webapi")]
@@ -21,9 +25,7 @@ use std::time::{Duration, Instant};
 
 use anyhow::Result;
 use librespot_core::spotify_uri::SpotifyUri;
-use librespot_playback::config::PlayerConfig;
-use librespot_playback::mixer::NoOpVolume;
-use librespot_playback::player::{Player, PlayerEvent};
+use librespot_playback::player::PlayerEvent;
 use tokio::runtime::Builder;
 use tracing::{debug, error, info, warn};
 
@@ -32,9 +34,9 @@ use crate::proto::events::Event;
 
 use clitunes_core::sanitize;
 
-/// A Spotify playback source. Bridges librespot's Player to the daemon's
-/// audio pipeline via [`SpotifySink`](sink::SpotifySink) and rubato resampling
-/// into the daemon's PCM ring sample rate.
+/// A Spotify playback source. Binds a fresh PCM channel to the daemon's
+/// shared [`SpotifySink`](sink::SpotifySink) per track and routes resampled
+/// frames into the PCM ring at the probed device rate.
 pub struct SpotifySource {
     /// Spotify track URI to play (e.g. `spotify:track:4PTG3Z6ehGkBFwjybzWkR8`).
     uri: String,
@@ -152,8 +154,12 @@ impl super::Source for SpotifySource {
     }
 }
 
-/// Core async playback loop. Connects to Spotify, loads the track,
-/// and bridges PCM from the sink receiver to the PcmWriter.
+/// Core async playback loop. Acquires a [`PlaybackGuard`] on the
+/// daemon-shared Player, loads the track, and bridges PCM from the
+/// sink receiver to the PcmWriter. The guard's Drop tears down the
+/// sink binding and stops the Player cleanly when this function
+/// returns — see [`handle`] module docs for the shared-singleton
+/// rationale.
 async fn run_spotify_playback(
     uri_str: &str,
     handle: &Arc<SpotifyHandle>,
@@ -162,37 +168,24 @@ async fn run_spotify_playback(
     stop: &AtomicBool,
     target_sample_rate: u32,
 ) -> Result<()> {
-    // 1. Build a fresh session via the shared handle (auth cache is
-    //    shared across source + web-api paths; Session itself is owned
-    //    locally so it lives and dies with this per-track runtime).
-    let session = handle.connect().await?;
+    // 1. Acquire the shared Player + Session and bind a fresh PCM
+    //    channel onto the shared sink. Lazy-init on first call;
+    //    reused across tracks afterwards.
+    let mut guard = handle.start_playback(target_sample_rate).await?;
 
     // 2. Parse the track URI.
     let spotify_uri = SpotifyUri::from_uri(uri_str)
         .map_err(|e| anyhow::anyhow!("invalid Spotify URI '{uri_str}': {e}"))?;
 
-    // 3. Create our custom sink with the PCM channel, pinned to the
-    //    daemon ring's sample rate so no downstream rate mismatch
-    //    occurs on non-48 kHz hardware.
-    let (sink, pcm_rx, pcm_notify) = sink::channel(target_sample_rate);
-
-    // 4. Create the librespot Player with our sink as the backend.
-    let player_config = PlayerConfig::default();
-    let player = Player::new(
-        player_config,
-        session.clone(),
-        Box::new(NoOpVolume),
-        move || Box::new(sink),
-    );
-
-    // 5. Subscribe to player events.
-    let mut player_events = player.get_player_event_channel();
-
-    // 6. Load the track.
-    player.load(spotify_uri, true, 0);
+    // 3. Subscribe to player events (fresh receiver from the guard
+    //    so no state bleeds across tracks) and kick off the load.
+    let mut player_events = guard
+        .take_player_events()
+        .expect("fresh guard always has a player-event receiver");
+    guard.player().load(spotify_uri, true, 0);
     info!(uri = %uri_str, "spotify: track loaded");
 
-    // 7. Track last known position for resume after reconnect.
+    // 4. Track last known position for resume after reconnect.
     let mut last_position_ms: u32 = 0;
 
     // Wall-clock pacing state. librespot downloads the encrypted track in
@@ -213,22 +206,22 @@ async fn run_spotify_playback(
     let mut pace_start: Option<Instant> = None;
     let mut pace_frames: u64 = 0;
 
-    // 8. PCM drain + event monitoring loop.
+    // 5. PCM drain + event monitoring loop.
     // `writer` isn't Send so we can't move it into a spawned task —
     // everything runs in the same task, woken by `tokio::select!`.
     loop {
         if stop.load(Ordering::Relaxed) {
-            player.stop();
+            guard.player().stop();
             break;
         }
 
         // Register the notify future BEFORE draining so we don't miss
         // notifications that fire between the last try_recv and select!.
-        let notified = pcm_notify.notified();
+        let notified = guard.pcm_notify().notified();
 
         // Drain all available PCM frames (non-blocking).
         loop {
-            match pcm_rx.try_recv() {
+            match guard.pcm_rx().try_recv() {
                 Ok(frames) => {
                     if pace_start.is_none() {
                         pace_start = Some(Instant::now());
@@ -288,7 +281,8 @@ async fn run_spotify_playback(
                                 break;
                             }
                             PlayerEvent::Unavailable { .. } => {
-                                let catalogue = session
+                                let catalogue = guard
+                                    .session()
                                     .user_data()
                                     .attributes
                                     .get("type")
@@ -322,7 +316,7 @@ async fn run_spotify_playback(
                                 warn!("spotify: session disconnected, attempting reconnect");
                                 pace_start = None;
                                 pace_frames = 0;
-                                if let Err(e) = handle.reconnect(&session).await {
+                                if let Err(e) = handle.reconnect().await {
                                     error!(error = %e, "spotify: reconnect failed");
                                     let _ = event_tx
                                         .send(Event::SourceError {
@@ -338,7 +332,7 @@ async fn run_spotify_playback(
                                     "spotify: reconnected, resuming track"
                                 );
                                 match SpotifyUri::from_uri(uri_str) {
-                                    Ok(uri) => player.load(uri, true, last_position_ms),
+                                    Ok(uri) => guard.player().load(uri, true, last_position_ms),
                                     Err(e) => {
                                         error!(error = %e, "spotify: failed to re-parse URI after reconnect");
                                         break;
@@ -360,13 +354,14 @@ async fn run_spotify_playback(
         }
     }
 
-    // Drop the PCM receiver before the function returns so any in-flight
-    // `SpotifySink::write` blocked on a full bounded channel wakes with
-    // `Err(SendError)` and exits cleanly. Without this the drop order —
-    // `player` drops before `pcm_rx` — deadlocks: `Player::drop` joins
-    // the decoder thread, which is parked in `SyncSender::send` waiting
-    // for a drain that only this task performed.
-    drop(pcm_rx);
+    // `guard` drops here — see `PlaybackGuard::drop`. It calls
+    // `player.stop()` (so the decoder goes idle for the next track),
+    // unbinds the sink (so any in-flight resample gets discarded
+    // silently), then the `pcm_rx` field drops and wakes any
+    // `SyncSender::send` still parked in the sink with `Disconnected`.
+    // This is the PR #29 shutdown-deadlock fix, now lifted into the
+    // guard so every playback gets it automatically.
+    drop(guard);
 
     info!("spotify: playback ended");
     Ok(())
@@ -432,10 +427,13 @@ mod tests {
     use crate::sources::Source;
     use std::path::PathBuf;
 
-    #[test]
-    fn source_name() {
+    #[tokio::test]
+    async fn source_name() {
         let (tx, _rx) = tokio::sync::mpsc::channel(1);
-        let handle = Arc::new(SpotifyHandle::new(PathBuf::from("/tmp/test-creds.json")));
+        let handle = Arc::new(SpotifyHandle::new(
+            PathBuf::from("/tmp/test-creds.json"),
+            tokio::runtime::Handle::current(),
+        ));
         let source = SpotifySource::new("spotify:track:test".into(), handle, tx, 48_000);
         assert_eq!(source.name(), "spotify");
     }
@@ -480,8 +478,9 @@ mod tests {
     }
 
     #[test]
-    fn sink_channel_produces_notify() {
-        let (_sink, _rx, notify) = sink::channel(48_000);
+    fn sink_bind_produces_notify() {
+        let (_sink, handle) = sink::new_sink(48_000);
+        let (_rx, notify) = handle.bind();
         // Verify the notify is functional (doesn't panic).
         notify.notify_one();
     }
@@ -492,7 +491,8 @@ mod tests {
         use librespot_playback::convert::Converter;
         use librespot_playback::decoder::AudioPacket;
 
-        let (mut sink_inst, _rx, notify) = sink::channel(48_000);
+        let (mut sink_inst, sink_handle) = sink::new_sink(48_000);
+        let (_rx, notify) = sink_handle.bind();
         sink_inst.start().expect("start should succeed");
 
         // Send enough data to fill at least one chunk.
@@ -509,11 +509,14 @@ mod tests {
         assert!(result.is_ok(), "notify should fire after PCM send");
     }
 
-    #[test]
-    fn source_construction_preserves_fields() {
+    #[tokio::test]
+    async fn source_construction_preserves_fields() {
         let (tx, _rx) = tokio::sync::mpsc::channel(1);
         let cred_path = PathBuf::from("/home/user/.config/clitunes/spotify-creds.json");
-        let handle = Arc::new(SpotifyHandle::new(cred_path.clone()));
+        let handle = Arc::new(SpotifyHandle::new(
+            cred_path.clone(),
+            tokio::runtime::Handle::current(),
+        ));
         let source = SpotifySource::new(
             "spotify:track:4PTG3Z6ehGkBFwjybzWkR8".into(),
             Arc::clone(&handle),

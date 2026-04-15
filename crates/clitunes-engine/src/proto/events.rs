@@ -79,6 +79,20 @@ pub enum Event {
         items: Vec<BrowseItem>,
         total: u32,
     },
+    /// A Spotify Connect client has handed off playback to the daemon —
+    /// emitted when `librespot_discovery` yields credentials and the
+    /// Connect runtime successfully builds a Spirc task. The remote name
+    /// is the phone/desktop client's display name if Spotify supplies it
+    /// (often `None` for Connect's first-yield before the name exchange).
+    ConnectDeviceConnected {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        remote_name: Option<String>,
+    },
+    /// The previously connected Spotify Connect client has let go —
+    /// emitted when the Spirc task resolves. The daemon stays idle on
+    /// the Connect source until either a new credential arrives or a
+    /// local `SourceCommand::Play*` interrupts.
+    ConnectDeviceDisconnected,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -173,6 +187,8 @@ impl Event {
             Self::SearchResults { .. } => "browse",
             Self::LibraryResults { .. } => "browse",
             Self::PlaylistResults { .. } => "browse",
+            Self::ConnectDeviceConnected { .. } => "connect",
+            Self::ConnectDeviceDisconnected => "connect",
         }
     }
 }
@@ -347,6 +363,33 @@ mod tests {
         let line = event.to_line();
         let parsed = Event::from_line(&line).unwrap();
         assert_eq!(parsed, event);
+    }
+
+    #[test]
+    fn connect_device_connected_roundtrip() {
+        let with_name = Event::ConnectDeviceConnected {
+            remote_name: Some("iPhone".into()),
+        };
+        let line = with_name.to_line();
+        assert!(line.contains("iPhone"));
+        assert_eq!(Event::from_line(&line).unwrap(), with_name);
+        assert_eq!(with_name.topic(), "connect");
+
+        let no_name = Event::ConnectDeviceConnected { remote_name: None };
+        let line = no_name.to_line();
+        // remote_name omitted when None — clients that don't care about
+        // device identity see a clean event.
+        assert!(!line.contains("remote_name"));
+        assert_eq!(Event::from_line(&line).unwrap(), no_name);
+    }
+
+    #[test]
+    fn connect_device_disconnected_roundtrip() {
+        let event = Event::ConnectDeviceDisconnected;
+        let line = event.to_line();
+        let parsed = Event::from_line(&line).unwrap();
+        assert_eq!(parsed, event);
+        assert_eq!(event.topic(), "connect");
     }
 
     #[test]

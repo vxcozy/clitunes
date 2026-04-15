@@ -8,6 +8,15 @@
 .idea/
 .vscode/
 .DS_Store
+.claude/
+
+# Secrets — never track these even if someone tries to force-add them
+.env
+.env.local
+.env.*.local
+.mcp.json
+config.json
+node_modules/
 
 # Stray dev outputs
 spike-tty.log

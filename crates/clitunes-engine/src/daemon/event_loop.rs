@@ -153,6 +153,17 @@ impl DaemonEventLoop {
         #[cfg(feature = "spotify")]
         let source_spotify_handle = Arc::clone(&spotify_handle);
 
+        // Shared slot so ConnectRuntime (producer) and ConnectSource
+        // (consumer, running in the source pipeline) can hand off the
+        // current sink handle. ConnectRuntime rebuilds the Session +
+        // Player + sink on every Discovery event; each rebuild replaces
+        // the slot contents so a freshly-activated ConnectSource always
+        // binds to the right sink.
+        #[cfg(feature = "connect")]
+        let connect_sink_slot = crate::sources::spotify::ConnectSinkSlot::new();
+        #[cfg(feature = "connect")]
+        let source_connect_sink_slot = connect_sink_slot.clone();
+
         let source_stop = Arc::clone(&self.stop);
         let source_event_tx = event_tx.clone();
         let source_last_state = Arc::clone(&last_state);
@@ -168,6 +179,8 @@ impl DaemonEventLoop {
                     format,
                     #[cfg(feature = "spotify")]
                     source_spotify_handle,
+                    #[cfg(feature = "connect")]
+                    source_connect_sink_slot,
                 );
             })
             .context("spawn source pipeline")?;
@@ -182,7 +195,7 @@ impl DaemonEventLoop {
             let connect_event_tx = event_tx.clone();
             match crate::sources::spotify::ConnectRuntime::spawn(
                 self.config.connect.clone(),
-                Arc::clone(&spotify_handle),
+                connect_sink_slot.clone(),
                 device_rate,
                 connect_source_cmd_tx,
                 connect_event_tx,
@@ -299,6 +312,7 @@ pub(crate) enum SourceCommand {
     PlayConnect,
 }
 
+#[allow(clippy::too_many_arguments)]
 fn run_source_pipeline(
     mut tee: TeeWriter,
     cmd_rx: std::sync::mpsc::Receiver<SourceCommand>,
@@ -307,6 +321,7 @@ fn run_source_pipeline(
     last_state: Arc<Mutex<Option<Event>>>,
     format: PcmFormat,
     #[cfg(feature = "spotify")] spotify_handle: Arc<crate::sources::spotify::SpotifyHandle>,
+    #[cfg(feature = "connect")] connect_sink_slot: crate::sources::spotify::ConnectSinkSlot,
 ) {
     let pending: Arc<Mutex<Option<SourceCommand>>> = Arc::new(Mutex::new(None));
     let source_stop = Arc::new(AtomicBool::new(false));
@@ -449,7 +464,7 @@ fn run_source_pipeline(
                     duration_secs: None,
                 });
                 let mut connect = crate::sources::spotify::ConnectSource::new(
-                    Arc::clone(&spotify_handle),
+                    connect_sink_slot.clone(),
                     format.sample_rate,
                 );
                 connect.run(&mut tee, &source_stop);

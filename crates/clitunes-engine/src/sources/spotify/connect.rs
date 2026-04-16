@@ -3,26 +3,34 @@
 //! Two cooperating pieces:
 //!
 //! - [`ConnectRuntime`] is a daemon-lifetime task that owns
-//!   `librespot_discovery::Discovery` and the active `Spirc`. It runs
-//!   the canonical `tokio::select!` loop from `librespot/src/main.rs`:
-//!   discovery yields credentials → shut down any old Spirc → ensure
-//!   Player+Session singletons are up → rebind session credentials →
-//!   spawn a fresh Spirc task. When credentials first arrive it pushes
-//!   `SourceCommand::PlayConnect` into the source pipeline.
+//!   `librespot_discovery::Discovery` and the active Session + Player +
+//!   Spirc. It runs the canonical `tokio::select!` loop from
+//!   `librespot/src/main.rs`: discovery yields credentials → shut down
+//!   any old Spirc → **build a fresh unconnected Session + Player +
+//!   sink** → call `Spirc::new`, which wires its dealer listeners and
+//!   then connects the session itself. When credentials first arrive
+//!   the runtime pushes `SourceCommand::PlayConnect` into the source
+//!   pipeline.
+//!
+//!   Two constraints to keep straight:
+//!
+//!   - librespot-core's `Session::connect()` sets a `tx_connection`
+//!     `OnceLock`, so a Session can be connected only once. Calling
+//!     connect ourselves *and* letting Spirc connect would fail the
+//!     second time with `SessionError::NotConnected`. `Spirc::new`
+//!     owns the connect call, so we hand it an unconnected Session.
+//!   - A Session whose Spirc has shut down isn't reusable as-is, so
+//!     every Discovery event gets a fresh Session+Player+sink triple.
+//!     This matches the reference librespot impl in `src/main.rs`.
 //!
 //! - [`ConnectSource`] is a `Source` impl. It owns no Spotify state of
-//!   its own; it simply binds a fresh PCM channel onto the daemon's
-//!   shared sink (via `SpotifyHandle::start_playback`) and pumps frames
-//!   into the daemon's `PcmWriter` until the source pipeline tells it
-//!   to stop. Spirc — running in `ConnectRuntime` — drives `Player`
-//!   independently (load track, play, pause, seek), and the resulting
-//!   PCM lands in the same shared sink that `ConnectSource` is bound to.
+//!   its own; it reads the current sink handle from [`ConnectSinkSlot`]
+//!   (published by ConnectRuntime) and pumps PCM into the daemon's
+//!   `PcmWriter` until the source pipeline tells it to stop.
 //!
-//! The two halves are deliberately decoupled: ConnectRuntime can outlive
-//! any number of ConnectSource activations (e.g. if a local verb
-//! interrupts and the user later picks the device again from their
-//! phone, the same Spirc task picks up where it left off without
-//! re-advertising on mDNS).
+//! The two halves share one [`ConnectSinkSlot`] so ConnectSource can
+//! always locate the current sink, even after ConnectRuntime rebuilds
+//! the Session/Player on a fresh Discovery event.
 //!
 //! ## Why ConnectSource doesn't subscribe to player events
 //!
@@ -35,15 +43,18 @@
 //! transports PCM and nothing else.
 
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use anyhow::Result;
 use librespot_connect::{ConnectConfig as LibrespotConnectConfig, Spirc};
+use librespot_core::config::SessionConfig;
+use librespot_core::session::Session;
 use librespot_discovery::Discovery;
+use librespot_playback::config::PlayerConfig;
 use librespot_playback::mixer::softmixer::SoftMixer;
-use librespot_playback::mixer::{Mixer, MixerConfig};
-use librespot_playback::player::PlayerEvent;
+use librespot_playback::mixer::{Mixer, MixerConfig, NoOpVolume};
+use librespot_playback::player::{Player, PlayerEvent};
 use tokio::runtime::{Builder, Handle as RuntimeHandle};
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
@@ -58,22 +69,66 @@ use crate::daemon::config::{BindMode, ConnectConfig};
 use crate::proto::events::Event;
 use crate::sources::Source;
 
-use super::handle::SpotifyHandle;
+use super::sink::{new_sink, SpotifySinkHandle};
+
+/// Shared slot holding the currently-active Connect sink handle.
+///
+/// Cloned between [`ConnectRuntime`] (producer: replaces the handle on
+/// every Discovery credential arrival) and [`ConnectSource`] (consumer:
+/// reads the current handle on activation and binds a PCM receiver onto
+/// it). `None` means ConnectRuntime hasn't built a Session yet, or has
+/// torn the old one down ahead of building the replacement.
+#[derive(Clone, Default)]
+pub struct ConnectSinkSlot {
+    inner: Arc<Mutex<Option<SpotifySinkHandle>>>,
+}
+
+impl ConnectSinkSlot {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    fn set(&self, handle: SpotifySinkHandle) {
+        *self.inner.lock().expect("connect sink slot poisoned") = Some(handle);
+    }
+
+    fn clear(&self) {
+        *self.inner.lock().expect("connect sink slot poisoned") = None;
+    }
+
+    /// Snapshot the current sink handle. Returns `None` if ConnectRuntime
+    /// hasn't published one yet.
+    pub fn current(&self) -> Option<SpotifySinkHandle> {
+        self.inner
+            .lock()
+            .expect("connect sink slot poisoned")
+            .clone()
+    }
+}
 
 /// `Source` impl active while the daemon is in `SourceKind::Connect`.
 ///
-/// Binds a PCM channel onto the shared Spotify sink and forwards frames
-/// to the daemon's writer until the pipeline interrupts. Owns no
-/// Spirc/discovery state — that all lives in [`ConnectRuntime`].
+/// Reads the current sink handle from [`ConnectSinkSlot`] and binds a
+/// PCM consumer onto it. If ConnectRuntime rebuilds the Session while
+/// this source is running (new Discovery event), the slot's handle
+/// rotates: the drain loop detects the new handle by `Arc` identity
+/// (see [`SpotifySinkHandle::points_to_same_slot`]) and returns, so
+/// the source pipeline re-enters `Connect` and builds a fresh
+/// `ConnectSource` that binds to the new handle.
+///
+/// Identity check, not `Disconnected`: the old rx stays connected
+/// because ConnectSource itself keeps a `SpotifySinkHandle` clone
+/// alive through its RAII unbinder, which holds the `Arc<Mutex<…>>`
+/// that owns the old tx. Waiting on `Disconnected` would hang.
 pub struct ConnectSource {
-    handle: Arc<SpotifyHandle>,
+    sink_slot: ConnectSinkSlot,
     target_sample_rate: u32,
 }
 
 impl ConnectSource {
-    pub fn new(handle: Arc<SpotifyHandle>, target_sample_rate: u32) -> Self {
+    pub fn new(sink_slot: ConnectSinkSlot, target_sample_rate: u32) -> Self {
         Self {
-            handle,
+            sink_slot,
             target_sample_rate,
         }
     }
@@ -85,17 +140,15 @@ impl Source for ConnectSource {
     }
 
     fn run(&mut self, writer: &mut dyn PcmWriter, stop: &AtomicBool) {
-        // Mirror outer stop → inner stop, same as SpotifySource. Lets the
-        // playback thread observe an `AtomicBool` it owns rather than
-        // borrowing the pipeline's stop flag across thread boundaries.
+        // Mirror outer stop → inner stop, same as SpotifySource.
         let inner_stop = Arc::new(AtomicBool::new(false));
-        let handle = Arc::clone(&self.handle);
         let target_rate = self.target_sample_rate;
+        let sink_slot = self.sink_slot.clone();
 
         std::thread::scope(|scope| {
             let mirror = Arc::clone(&inner_stop);
             scope.spawn(move || {
-                while !stop.load(Ordering::Relaxed) {
+                while !stop.load(Ordering::Relaxed) && !mirror.load(Ordering::Relaxed) {
                     std::thread::sleep(Duration::from_millis(50));
                 }
                 mirror.store(true, Ordering::SeqCst);
@@ -111,30 +164,70 @@ impl Source for ConnectSource {
                     }
                 };
                 rt.block_on(async {
-                    if let Err(e) = drain_pcm(&handle, writer, &playback_stop, target_rate).await {
+                    if let Err(e) = drain_pcm(&sink_slot, writer, &playback_stop, target_rate).await
+                    {
                         error!(error = %e, "connect: PCM drain ended with error");
                     }
                 });
+                playback_stop.store(true, Ordering::SeqCst);
             });
         });
     }
 }
 
-/// Bind the shared sink and push frames into `writer` until `stop`.
+/// Wait for ConnectRuntime to publish a sink, bind a PCM receiver onto
+/// it, and drain frames into `writer` until `stop` fires or the slot
+/// rotates (ConnectRuntime rebuilt the Session and published a new
+/// handle).
 ///
-/// Mirrors the wall-clock pacing pattern from `run_spotify_playback`:
-/// librespot decodes well ahead of realtime, so we sleep when the
-/// downstream ring is `MAX_AHEAD` ahead of the wall clock to give cpal
-/// time to consume. Without this the ring overruns and the output
-/// sounds chopped.
+/// ## Why rotation uses identity, not `Disconnected`
+///
+/// When ConnectRuntime rebuilds, the old Player and its sink drop, but
+/// the tx inside the old `SinkBinding` lives inside `Arc<Mutex<…>>`
+/// and this function keeps an `Arc` clone alive through its RAII
+/// unbinder. So the old rx never sees `Disconnected` — we'd hang.
+/// Instead we poll `sink_slot.current()` and compare by `Arc` pointer
+/// identity; when it rotates to a new handle we return, the source
+/// pipeline re-enters Connect, and a fresh `drain_pcm` binds to the
+/// new handle.
+///
+/// Wall-clock pacing mirrors `run_spotify_playback`: librespot decodes
+/// well ahead of realtime, so we sleep when the downstream ring is
+/// `MAX_AHEAD` ahead of the wall clock. Without this the ring overruns
+/// and the output sounds chopped.
 async fn drain_pcm(
-    handle: &Arc<SpotifyHandle>,
+    sink_slot: &ConnectSinkSlot,
     writer: &mut dyn PcmWriter,
     stop: &AtomicBool,
     target_rate: u32,
 ) -> Result<()> {
-    let guard = handle.start_playback(target_rate).await?;
-    info!("connect: source bound to shared sink, pumping PCM");
+    // Wait (briefly) for ConnectRuntime to publish a sink. PlayConnect is
+    // only sent after the runtime builds the Session+Player+sink, so this
+    // should return on the first iteration in practice — the poll is a
+    // belt-and-braces guard for an unexpected scheduling reorder.
+    let sink_handle = loop {
+        if stop.load(Ordering::Relaxed) {
+            return Ok(());
+        }
+        if let Some(h) = sink_slot.current() {
+            break h;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    };
+
+    let (pcm_rx, pcm_notify) = sink_handle.bind();
+    info!("connect: source bound to runtime sink, pumping PCM");
+
+    // RAII unbind so the sink stops routing to our channel if we bail
+    // via an error or return early. Without this, a stale binding could
+    // absorb frames meant for a later ConnectSource activation.
+    struct Unbinder(SpotifySinkHandle);
+    impl Drop for Unbinder {
+        fn drop(&mut self) {
+            self.0.unbind();
+        }
+    }
+    let unbinder = Unbinder(sink_handle);
 
     const MAX_AHEAD: Duration = Duration::from_millis(400);
     const PACING_MARGIN: Duration = Duration::from_millis(150);
@@ -146,10 +239,24 @@ async fn drain_pcm(
             break;
         }
 
-        let notified = guard.pcm_notify().notified();
+        // Detect sink rotation: ConnectRuntime may have dropped the old
+        // Session and published a new handle. A rotated slot means the
+        // old Player is gone and no more PCM will arrive on our rx —
+        // return so the source pipeline can build a fresh ConnectSource
+        // against the new sink. A `None` slot means the runtime is
+        // mid-rebuild (cleared but not yet republished); keep looping
+        // until it's set, then compare identity on the next iteration.
+        if let Some(current) = sink_slot.current() {
+            if !current.points_to_same_slot(&unbinder.0) {
+                info!("connect: sink rotated by runtime, releasing source for rebuild");
+                return Ok(());
+            }
+        }
+
+        let notified = pcm_notify.notified();
 
         loop {
-            match guard.pcm_rx().try_recv() {
+            match pcm_rx.try_recv() {
                 Ok(frames) => {
                     if pace_start.is_none() {
                         pace_start = Some(Instant::now());
@@ -160,7 +267,10 @@ async fn drain_pcm(
                 }
                 Err(std::sync::mpsc::TryRecvError::Empty) => break,
                 Err(std::sync::mpsc::TryRecvError::Disconnected) => {
-                    debug!("connect: PCM channel disconnected");
+                    // Not expected during a runtime rebuild (see module
+                    // doc), but still the right thing to do on shutdown
+                    // paths where every clone has gone away.
+                    debug!("connect: PCM channel fully disconnected, exiting drain");
                     return Ok(());
                 }
             }
@@ -178,10 +288,7 @@ async fn drain_pcm(
 
         tokio::select! {
             _ = notified => {}
-            _ = tokio::time::sleep(Duration::from_millis(50)) => {
-                // Periodic stop-flag check, also covers the silent-gap
-                // case between Spirc tracks where no PCM is flowing.
-            }
+            _ = tokio::time::sleep(Duration::from_millis(50)) => {}
         }
     }
 
@@ -189,11 +296,11 @@ async fn drain_pcm(
     Ok(())
 }
 
-/// Daemon-lifetime task that owns Discovery + the active Spirc and
-/// drives the canonical librespot connect loop. Spawned at daemon boot
-/// when `config.connect.enabled = true`; survives source-pipeline
-/// transitions so re-picking the device from the phone reuses the
-/// existing mDNS advertisement.
+/// Daemon-lifetime task that owns Discovery + the active Session/Player/
+/// Spirc and drives the canonical librespot connect loop. Spawned at
+/// daemon boot when `config.connect.enabled = true`; survives
+/// source-pipeline transitions so re-picking the device from the phone
+/// reuses the existing mDNS advertisement.
 pub struct ConnectRuntime {
     shutdown_tx: mpsc::UnboundedSender<()>,
     task: JoinHandle<()>,
@@ -204,7 +311,7 @@ impl ConnectRuntime {
     /// Returns immediately; the task runs until [`shutdown`](Self::shutdown).
     pub(crate) fn spawn(
         connect_config: ConnectConfig,
-        handle: Arc<SpotifyHandle>,
+        sink_slot: ConnectSinkSlot,
         target_rate: u32,
         source_cmd_tx: std::sync::mpsc::Sender<crate::daemon::event_loop::SourceCommand>,
         event_tx: mpsc::Sender<Event>,
@@ -213,7 +320,7 @@ impl ConnectRuntime {
         let device_id = device_id_from_name(&connect_config.name);
         let client_id = super::auth::spotify_client_id();
 
-        let mut discovery_builder = Discovery::builder(device_id, client_id)
+        let mut discovery_builder = Discovery::builder(device_id.clone(), client_id)
             .name(connect_config.name.clone())
             .port(connect_config.port);
 
@@ -240,7 +347,7 @@ impl ConnectRuntime {
         let task = runtime.spawn(run_connect_loop(
             discovery,
             connect_config,
-            handle,
+            sink_slot,
             target_rate,
             source_cmd_tx,
             event_tx,
@@ -262,16 +369,31 @@ impl ConnectRuntime {
     }
 }
 
-#[allow(clippy::too_many_arguments)]
+/// Per-session state owned by the runtime loop. Held so the Player and
+/// Session stay alive for as long as Spirc is driving them; dropped when
+/// Discovery yields a fresh credential and we rebuild.
+#[allow(dead_code)]
+struct ActivePlayback {
+    session: Session,
+    player: Arc<Player>,
+    sink_handle: SpotifySinkHandle,
+}
+
+// `current_playback` is a drop anchor — we hold Session+Player+sink
+// alive between Discovery events and drop the old one before building
+// the replacement. The binding is `#[allow(dead_code)]` on the struct;
+// the assignment sites use `drop(current_playback.take())` to make the
+// drop explicit at each rebuild point.
 async fn run_connect_loop(
     mut discovery: Discovery,
     connect_config: ConnectConfig,
-    handle: Arc<SpotifyHandle>,
+    sink_slot: ConnectSinkSlot,
     target_rate: u32,
     source_cmd_tx: std::sync::mpsc::Sender<crate::daemon::event_loop::SourceCommand>,
     event_tx: mpsc::Sender<Event>,
     mut shutdown_rx: mpsc::UnboundedReceiver<()>,
 ) {
+    let device_id = device_id_from_name(&connect_config.name);
     let librespot_config = LibrespotConnectConfig {
         name: connect_config.name.clone(),
         initial_volume: scaled_volume(connect_config.initial_volume),
@@ -280,7 +402,9 @@ async fn run_connect_loop(
 
     let mut current_spirc: Option<Spirc> = None;
     let mut current_task: Option<JoinHandle<()>> = None;
+    let mut current_playback: Option<ActivePlayback> = None;
     let mut event_subscription: Option<librespot_playback::player::PlayerEventChannel> = None;
+    let mut announced_connected = false;
 
     loop {
         tokio::select! {
@@ -294,12 +418,19 @@ async fn run_connect_loop(
                 if let Some(task) = current_task.take() {
                     let _ = task.await;
                 }
+                sink_slot.clear();
                 break;
             }
 
             Some(credentials) = discovery.next() => {
                 info!("connect: discovery yielded credentials, (re)starting spirc");
 
+                // Tear down any previous spirc before building a fresh
+                // Session. The old Player/Session/sink drop when we
+                // replace `current_playback` below — that drop wakes any
+                // ConnectSource blocked on the old PCM channel, which
+                // exits cleanly and lets the source pipeline re-enter
+                // Connect against the new sink.
                 if let Some(spirc) = current_spirc.take() {
                     if let Err(e) = Spirc::shutdown(&spirc) {
                         warn!(error = %e, "connect: failed to shut down previous spirc");
@@ -308,45 +439,49 @@ async fn run_connect_loop(
                 if let Some(task) = current_task.take() {
                     let _ = task.await;
                 }
+                // Clear any lingering state from a prior failed build
+                // (mixer or Spirc::new error on a previous iteration
+                // left `event_subscription`/`sink_slot`/`current_playback`
+                // pointing at orphaned resources). On the happy path
+                // these were all dropped on the previous Spirc teardown.
+                drop(event_subscription.take());
+                sink_slot.clear();
+                // Drop the old Session+Player+sink *before* building
+                // replacements — otherwise two Sessions briefly compete
+                // for the same Discovery credentials.
+                drop(current_playback.take());
 
-                let (player, session) = match handle
-                    .ensure_player_and_session(target_rate)
-                    .await
-                {
-                    Ok(pair) => pair,
-                    Err(e) => {
-                        error!(error = %e, "connect: failed to initialise player+session");
-                        let _ = event_tx
-                            .send(Event::SourceError {
-                                source: "connect".into(),
-                                error: format!("connect init failed: {e}"),
-                                error_code: None,
-                            })
-                            .await;
-                        continue;
-                    }
-                };
+                // Fresh, unconnected Session — Spirc::new itself calls
+                // session.connect() after wiring dealer listeners, and
+                // the OnceLock inside Session means only one connect
+                // succeeds. The device_id must match what Discovery
+                // advertises or the backend can't correlate the two.
+                let session = Session::new(
+                    SessionConfig {
+                        device_id: device_id.clone(),
+                        ..SessionConfig::default()
+                    },
+                    None,
+                );
 
-                if let Err(e) = session.connect(credentials.clone(), true).await {
-                    error!(error = %e, "connect: session.connect failed");
-                    let _ = event_tx
-                        .send(Event::SourceError {
-                            source: "connect".into(),
-                            error: format!("session connect failed: {e}"),
-                            error_code: None,
-                        })
-                        .await;
-                    continue;
-                }
+                // Build a fresh sink + Player bound to this session. The
+                // sink is single-use (`Player::new` consumes it via
+                // `FnOnce`), so a new Session means a new Player means a
+                // new sink — all three share a lifetime.
+                let (sink, sink_handle) = new_sink(target_rate);
+                let player = Player::new(
+                    PlayerConfig::default(),
+                    session.clone(),
+                    Box::new(NoOpVolume),
+                    move || Box::new(sink),
+                );
+                info!(target_rate, "connect: player + sink built");
 
-                // Subscribe to player events *before* Spirc::new so we
-                // never miss the initial TrackChanged that follows a
-                // phone client picking us. Only one subscription needs
-                // to live across Spirc rebuilds — the underlying
-                // Player is the daemon's singleton.
-                if event_subscription.is_none() {
-                    event_subscription = Some(player.get_player_event_channel());
-                }
+                // Publish the new handle so ConnectSource (running in the
+                // source pipeline) can bind a PCM receiver onto it.
+                sink_slot.set(sink_handle.clone());
+
+                event_subscription = Some(player.get_player_event_channel());
 
                 let mixer: Arc<dyn Mixer> = match SoftMixer::open(MixerConfig::default()) {
                     Ok(m) => Arc::new(m),
@@ -364,7 +499,7 @@ async fn run_connect_loop(
                 };
                 let new_spirc = Spirc::new(
                     librespot_config.clone(),
-                    session,
+                    session.clone(),
                     credentials,
                     Arc::clone(&player),
                     mixer,
@@ -388,17 +523,23 @@ async fn run_connect_loop(
 
                 current_spirc = Some(spirc);
                 current_task = Some(tokio::spawn(spirc_task));
+                current_playback = Some(ActivePlayback {
+                    session,
+                    player,
+                    sink_handle,
+                });
 
-                let _ = event_tx
-                    .send(Event::ConnectDeviceConnected { remote_name: None })
-                    .await;
-
-                // Tell the source pipeline to enter passive Connect mode
-                // if it isn't already. Best-effort: if the channel is
-                // closed the daemon is shutting down anyway.
-                let _ = source_cmd_tx.send(
-                    crate::daemon::event_loop::SourceCommand::PlayConnect,
-                );
+                if !announced_connected {
+                    announced_connected = true;
+                    let _ = event_tx
+                        .send(Event::ConnectDeviceConnected { remote_name: None })
+                        .await;
+                    // Ask the source pipeline to enter passive Connect
+                    // mode. Best-effort: on subsequent rebuilds the
+                    // pipeline is already in Connect, so we don't resend.
+                    let _ = source_cmd_tx
+                        .send(crate::daemon::event_loop::SourceCommand::PlayConnect);
+                }
             }
 
             // Bridge librespot player events to daemon NowPlayingChanged
@@ -417,6 +558,10 @@ async fn run_connect_loop(
                 }
                 current_task = None;
                 current_spirc = None;
+                drop(current_playback.take());
+                event_subscription = None;
+                sink_slot.clear();
+                announced_connected = false;
                 let _ = event_tx
                     .send(Event::ConnectDeviceDisconnected)
                     .await;
@@ -506,16 +651,19 @@ fn scaled_volume(initial: u8) -> u16 {
     ((u32::from(initial) * u32::from(u16::MAX)) / 100) as u16
 }
 
-/// Derive a stable device ID from the configured device name. The
-/// Spotify Connect protocol identifies devices by an opaque ID; using
-/// a hash of the user's chosen name keeps it stable across daemon
-/// restarts without persisting anything.
+/// Derive a stable device ID from the configured device name, matching
+/// the reference librespot impl: SHA-1 of the name encoded as 40-char
+/// lowercase hex. Must match between Discovery and SessionConfig or
+/// the Spotify backend can't correlate the Zeroconf handshake with the
+/// dealer registration.
 fn device_id_from_name(name: &str) -> String {
-    use std::collections::hash_map::DefaultHasher;
-    use std::hash::{Hash, Hasher};
-    let mut hasher = DefaultHasher::new();
-    name.hash(&mut hasher);
-    format!("{:016x}", hasher.finish())
+    use sha1::Digest;
+    let hash = sha1::Sha1::digest(name.as_bytes());
+    hash.iter().fold(String::with_capacity(40), |mut s, b| {
+        use std::fmt::Write;
+        let _ = write!(s, "{b:02x}");
+        s
+    })
 }
 
 #[cfg(test)]
@@ -530,27 +678,140 @@ mod tests {
     }
 
     #[test]
-    fn device_id_is_stable_for_same_name() {
+    fn device_id_is_stable_sha1_hex() {
         let id_a = device_id_from_name("Living Room");
         let id_b = device_id_from_name("Living Room");
         let id_c = device_id_from_name("Bedroom");
         assert_eq!(id_a, id_b);
         assert_ne!(id_a, id_c);
-        assert_eq!(id_a.len(), 16, "device ID must be 16 hex chars");
+        assert_eq!(id_a.len(), 40, "device ID must be 40 hex chars (SHA-1)");
+        assert!(id_a.chars().all(|c| c.is_ascii_hexdigit()));
     }
 
     #[test]
     fn connect_source_name() {
-        let handle = Arc::new(SpotifyHandle::new(
-            std::path::PathBuf::from("/tmp/clitunes-test-creds.json"),
-            tokio::runtime::Handle::try_current().unwrap_or_else(|_| {
-                let rt = tokio::runtime::Runtime::new().unwrap();
-                let h = rt.handle().clone();
-                std::mem::forget(rt);
-                h
-            }),
-        ));
-        let source = ConnectSource::new(handle, 48_000);
+        let slot = ConnectSinkSlot::new();
+        let source = ConnectSource::new(slot, 48_000);
         assert_eq!(source.name(), "connect");
+    }
+
+    #[test]
+    fn sink_slot_set_and_clear() {
+        let slot = ConnectSinkSlot::new();
+        assert!(slot.current().is_none(), "fresh slot is empty");
+
+        let (_sink, handle) = new_sink(48_000);
+        slot.set(handle);
+        assert!(slot.current().is_some(), "set populates slot");
+
+        slot.clear();
+        assert!(slot.current().is_none(), "clear empties slot");
+    }
+
+    /// Test-only PcmWriter. Counts frames written so tests can assert on
+    /// whether any PCM flowed through drain_pcm.
+    struct CountingWriter(Arc<std::sync::atomic::AtomicUsize>);
+    impl crate::audio::ring::PcmWriter for CountingWriter {
+        fn write(&mut self, frames: &[clitunes_core::StereoFrame]) -> usize {
+            self.0
+                .fetch_add(frames.len(), std::sync::atomic::Ordering::SeqCst);
+            frames.len()
+        }
+    }
+
+    /// When ConnectRuntime rotates the slot to a fresh handle,
+    /// `drain_pcm` must observe the rotation by Arc identity and
+    /// return so the source pipeline can re-enter Connect. This is
+    /// the regression guard for the bug where `drain_pcm` waited on
+    /// `Disconnected` and hung — ConnectSource's own Unbinder keeps
+    /// the old tx alive, so `Disconnected` never fires on rebuild.
+    #[tokio::test]
+    async fn drain_pcm_returns_when_slot_rotates() {
+        let slot = ConnectSinkSlot::new();
+        let (_sink_a, handle_a) = new_sink(48_000);
+        slot.set(handle_a);
+
+        let stop = AtomicBool::new(false);
+        let writes = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let mut writer = CountingWriter(Arc::clone(&writes));
+
+        // Keep sink_b alive for the duration of the select so the
+        // rotation's new handle points at a real sink.
+        let (_sink_b, handle_b) = new_sink(48_000);
+        let rotation_slot = slot.clone();
+
+        let trigger = async move {
+            // Let drain_pcm enter its loop and make at least one pass
+            // against handle_a before we rotate.
+            tokio::time::sleep(Duration::from_millis(80)).await;
+            rotation_slot.set(handle_b);
+            // Hang guard: if drain_pcm doesn't return, this wins the
+            // select and panics with a clear message.
+            tokio::time::sleep(Duration::from_millis(1_500)).await;
+            panic!("drain_pcm did not return within 1.5s of slot rotation");
+        };
+
+        tokio::select! {
+            result = drain_pcm(&slot, &mut writer, &stop, 48_000) => {
+                result.expect("drain_pcm should return Ok on rotation");
+            }
+            _ = trigger => unreachable!("trigger's panic branch fires only on hang"),
+        }
+    }
+
+    /// `drain_pcm` should also return cleanly when the caller asserts
+    /// `stop`. Covers the shutdown path that's distinct from the
+    /// rotation path.
+    #[tokio::test]
+    async fn drain_pcm_returns_when_stop_asserted() {
+        let slot = ConnectSinkSlot::new();
+        let (_sink, handle) = new_sink(48_000);
+        slot.set(handle);
+
+        let stop = Arc::new(AtomicBool::new(false));
+        let writes = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let mut writer = CountingWriter(Arc::clone(&writes));
+
+        let stop_trigger = Arc::clone(&stop);
+        let trigger = async move {
+            tokio::time::sleep(Duration::from_millis(80)).await;
+            stop_trigger.store(true, Ordering::SeqCst);
+            tokio::time::sleep(Duration::from_millis(1_500)).await;
+            panic!("drain_pcm did not return within 1.5s of stop");
+        };
+
+        tokio::select! {
+            result = drain_pcm(&slot, &mut writer, &stop, 48_000) => {
+                result.expect("drain_pcm should return Ok on stop");
+            }
+            _ = trigger => unreachable!("trigger's panic branch fires only on hang"),
+        }
+    }
+
+    /// `drain_pcm`'s initial wait-for-publish loop must respect `stop`
+    /// even when the slot is never populated — otherwise a misordered
+    /// shutdown where Discovery never yielded credentials would hang
+    /// the source thread.
+    #[tokio::test]
+    async fn drain_pcm_returns_from_initial_wait_on_stop() {
+        let slot = ConnectSinkSlot::new(); // deliberately empty
+        let stop = Arc::new(AtomicBool::new(false));
+        let writes = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let mut writer = CountingWriter(Arc::clone(&writes));
+
+        let stop_trigger = Arc::clone(&stop);
+        let trigger = async move {
+            tokio::time::sleep(Duration::from_millis(80)).await;
+            stop_trigger.store(true, Ordering::SeqCst);
+            tokio::time::sleep(Duration::from_millis(1_500)).await;
+            panic!("drain_pcm did not exit initial wait loop within 1.5s");
+        };
+
+        tokio::select! {
+            result = drain_pcm(&slot, &mut writer, &stop, 48_000) => {
+                result.expect("drain_pcm should return Ok on stop");
+            }
+            _ = trigger => unreachable!("trigger's panic branch fires only on hang"),
+        }
     }
 }

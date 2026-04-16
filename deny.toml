@@ -69,6 +69,11 @@ ignore = [
     "RUSTSEC-2025-0134",
     # webpki CRL matching bug. Not relevant — we don't use CRL checking.
     "RUSTSEC-2026-0049",
+    # webpki name-constraint bugs (URI names, wildcards). Transitive via
+    # librespot → hyper-proxy2 → webpki 0.22.4. We connect to fixed
+    # Spotify AP hostnames, not user-supplied certs.
+    "RUSTSEC-2026-0098",
+    "RUSTSEC-2026-0099",
 ]
 
 [sources]

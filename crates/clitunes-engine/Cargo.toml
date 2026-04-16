@@ -52,6 +52,7 @@ connect = [
     "spotify",
     "dep:librespot-connect",
     "dep:librespot-discovery",
+    "dep:sha1",
     "dep:futures-util",
     "dep:tokio",
 ]
@@ -115,6 +116,7 @@ librespot-metadata = { workspace = true, optional = true }
 librespot-oauth = { workspace = true, optional = true }
 librespot-connect = { workspace = true, optional = true }
 librespot-discovery = { workspace = true, optional = true }
+sha1 = { workspace = true, optional = true }
 rubato = { workspace = true, optional = true }
 
 # Spotify Web API (v1.2 webapi feature).

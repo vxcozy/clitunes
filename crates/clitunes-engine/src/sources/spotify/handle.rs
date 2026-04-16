@@ -20,11 +20,18 @@
 //!    left the session pointing at a runtime that had already died.
 //!
 //! 3. **Player** — `Arc<librespot_playback::player::Player>`. Shared
-//!    across tracks, v1.2 OAuth-URI playback, and (once Unit 4 lands)
-//!    Spotify Connect. Player spawns its own decoder thread and owns
-//!    its own private tokio runtime, so it doesn't care about the
-//!    caller's runtime — but the sink it wraps *does* care who
-//!    receives PCM. See the sink handle.
+//!    across tracks and v1.2 OAuth-URI playback. Player spawns its own
+//!    decoder thread and owns its own private tokio runtime, so it
+//!    doesn't care about the caller's runtime — but the sink it wraps
+//!    *does* care who receives PCM. See the sink handle.
+//!
+//!    Spotify Connect deliberately does *not* share this singleton.
+//!    `Spirc::new` itself calls `session.connect(credentials, true)`
+//!    after wiring its dealer listeners, and librespot-core's
+//!    `tx_connection` `OnceLock` means a Session can only be connected
+//!    once — so Connect needs a fresh, *unconnected* Session per
+//!    Discovery credential arrival, plus a matching Player. See
+//!    `connect::ConnectRuntime`.
 //!
 //! 4. **Sink handle** — [`SpotifySinkHandle`]. Because `Player::new`
 //!    consumes its sink via `FnOnce`, the sink is singletonised
@@ -223,35 +230,6 @@ impl SpotifyHandle {
             pcm_notify,
             player_events: Some(player_events),
         })
-    }
-
-    /// Initialise the Player + Session singleton (if needed) and return
-    /// shared clones. Unlike [`start_playback`](Self::start_playback) this
-    /// does *not* bind a PCM consumer onto the sink — the singleton's sink
-    /// remains unbound until some other caller takes it.
-    ///
-    /// Used by the Spotify Connect runtime, which needs a Player + Session
-    /// to construct `Spirc` at daemon boot but doesn't itself drain PCM.
-    /// The `ConnectSource` running in the source pipeline is the one that
-    /// binds the sink, so the two halves are deliberately decoupled.
-    ///
-    /// Same `target_rate` constraint as `start_playback`: the rate is
-    /// locked at first init and a mismatched later call is an error.
-    #[cfg(feature = "connect")]
-    pub async fn ensure_player_and_session(
-        &self,
-        target_rate: u32,
-    ) -> Result<(Arc<Player>, Session)> {
-        let state = self.ensure_playback_state(target_rate).await?;
-        if state.target_rate != target_rate {
-            anyhow::bail!(
-                "spotify: playback state was initialised at {} Hz but called at {} Hz — \
-                 the device rate must not change during a daemon lifetime",
-                state.target_rate,
-                target_rate
-            );
-        }
-        Ok((Arc::clone(&state.player), state.session.clone()))
     }
 
     /// Force a fresh credential load and reconnect the shared Session.
@@ -486,23 +464,6 @@ mod tests {
         let handle = test_handle("/tmp/clitunes-test-handle-missing-tp.json");
         let err = match handle.token_provider().await {
             Ok(_) => panic!("token_provider() should fail with no cached credentials"),
-            Err(e) => e,
-        };
-        assert!(
-            format!("{err:#}").contains("no cached Spotify credentials"),
-            "unexpected error: {err:#}"
-        );
-    }
-
-    #[cfg(feature = "connect")]
-    #[tokio::test]
-    async fn ensure_player_and_session_fails_fast_without_credentials() {
-        // ConnectRuntime calls this at daemon boot. With no cached
-        // credentials it should surface the same auth error as
-        // start_playback rather than panicking or hanging.
-        let handle = test_handle("/tmp/clitunes-test-handle-eps-no-creds.json");
-        let err = match handle.ensure_player_and_session(48_000).await {
-            Ok(_) => panic!("ensure_player_and_session should fail with no cached credentials"),
             Err(e) => e,
         };
         assert!(

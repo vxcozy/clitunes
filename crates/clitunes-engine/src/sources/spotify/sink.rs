@@ -110,6 +110,26 @@ impl SpotifySinkHandle {
     pub fn unbind(&self) {
         *self.bound.lock().expect("sink binding mutex poisoned") = None;
     }
+
+    /// Whether `self` and `other` address the same underlying sink
+    /// binding slot. Two clones of the same handle return `true`;
+    /// handles produced by separate [`new_sink`] calls return `false`.
+    ///
+    /// Used by Spotify Connect to detect that [`ConnectRuntime`] has
+    /// rotated the sink (fresh Session/Player on re-pair) so
+    /// [`ConnectSource`] can stop draining the old sink and let the
+    /// source pipeline re-enter Connect against the new one. An
+    /// identity check is necessary because the old sink's tx is held
+    /// alive by the still-bound `SpotifySinkHandle`, so receivers on
+    /// the old channel do *not* observe `Disconnected` when the old
+    /// Player drops — a naïve "wait for Disconnected" loop would hang.
+    ///
+    /// [`ConnectRuntime`]: super::ConnectRuntime
+    /// [`ConnectSource`]: super::ConnectSource
+    #[cfg(feature = "connect")]
+    pub fn points_to_same_slot(&self, other: &SpotifySinkHandle) -> bool {
+        Arc::ptr_eq(&self.bound, &other.bound)
+    }
 }
 
 pub struct SpotifySink {
@@ -616,6 +636,57 @@ mod tests {
             !drain_rx(&rx2).is_empty(),
             "re-bound receiver should get frames"
         );
+    }
+
+    // ---------------------------------------------------------------
+    // 7b. Identity: clones of one handle compare equal via
+    //     points_to_same_slot; handles from separate new_sink calls
+    //     compare unequal. Used by ConnectSource to detect sink rotation.
+    // ---------------------------------------------------------------
+    #[cfg(feature = "connect")]
+    #[test]
+    fn points_to_same_slot_distinguishes_sinks() {
+        let (_sink_a, handle_a) = new_sink(48_000);
+        let (_sink_b, handle_b) = new_sink(48_000);
+        let handle_a_clone = handle_a.clone();
+
+        assert!(
+            handle_a.points_to_same_slot(&handle_a_clone),
+            "clones of the same handle address the same slot"
+        );
+        assert!(
+            !handle_a.points_to_same_slot(&handle_b),
+            "handles from separate new_sink() calls address different slots"
+        );
+    }
+
+    // ---------------------------------------------------------------
+    // 7c. Old rx does NOT observe Disconnected when the old Player/Sink
+    //     drops while some SpotifySinkHandle clone remains bound. This
+    //     is the failure mode that motivated points_to_same_slot: a
+    //     ConnectSource waiting on Disconnected would hang forever.
+    // ---------------------------------------------------------------
+    #[test]
+    fn rx_stays_connected_while_other_handle_clone_lives() {
+        let (sink, handle) = new_sink(48_000);
+        let (rx, _notify) = handle.bind();
+
+        // Drop the sink — simulates old Player teardown on re-pair.
+        drop(sink);
+
+        // A separate handle clone survives — simulates the clone held
+        // by ConnectSource's Unbinder.
+        let _surviving_clone = handle.clone();
+        drop(handle);
+
+        match rx.try_recv() {
+            Err(mpsc::TryRecvError::Empty) => {} // expected — tx still alive via surviving clone
+            Err(mpsc::TryRecvError::Disconnected) => panic!(
+                "rx disconnected while a SpotifySinkHandle clone still lives — \
+                 the premise of points_to_same_slot is wrong"
+            ),
+            Ok(_) => panic!("unexpected frames on empty sink"),
+        }
     }
 
     // ---------------------------------------------------------------

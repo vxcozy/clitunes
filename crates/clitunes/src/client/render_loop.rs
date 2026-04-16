@@ -12,6 +12,7 @@ use clitunes_engine::pcm::cross_process_api::PcmConsumer;
 use clitunes_engine::proto::events::Event;
 use clitunes_engine::proto::verbs::{SourceArg, Verb};
 use clitunes_engine::tui::album_art::AlbumArtState;
+use clitunes_engine::tui::components::now_playing::{render_now_playing, NowPlayingState};
 use clitunes_engine::tui::micro::{BreathingAnimation, ErrorPulse, QuitFade, VolumeOverlay};
 use clitunes_engine::tui::picker::{
     key_from_bytes, load_curated, paint_picker, CuratedList, CuratedLoadOutcome, PickerAction,
@@ -85,6 +86,7 @@ struct AppState {
     /// Album art state. Updated from `NowPlayingChanged.art_url`;
     /// painted in the top-right of the grid when a cover is loaded.
     album_art: AlbumArtState,
+    now_playing: NowPlayingState,
 }
 
 impl AppState {
@@ -121,6 +123,7 @@ impl AppState {
             frame_idx: 0,
             pending_search: None,
             album_art: AlbumArtState::new(),
+            now_playing: NowPlayingState::default(),
         }
     }
 
@@ -176,11 +179,27 @@ impl AppState {
             Event::VolumeChanged { volume } => {
                 self.volume_overlay.show(*volume);
             }
-            Event::NowPlayingChanged { art_url, .. } => match art_url {
-                Some(url) => self.album_art.request(url),
-                None => self.album_art.clear(),
-            },
-            Event::ConnectDeviceConnected { .. } | Event::ConnectDeviceDisconnected => {}
+            Event::NowPlayingChanged {
+                artist,
+                title,
+                album,
+                art_url,
+                ..
+            } => {
+                self.now_playing.artist = artist.clone();
+                self.now_playing.title = title.clone();
+                self.now_playing.album = album.clone();
+                match art_url {
+                    Some(url) => self.album_art.request(url),
+                    None => self.album_art.clear(),
+                }
+            }
+            Event::ConnectDeviceConnected { remote_name } => {
+                self.now_playing.connect_device = Some(remote_name.clone().unwrap_or_default());
+            }
+            Event::ConnectDeviceDisconnected => {
+                self.now_playing.connect_device = None;
+            }
 
             Event::SourceError {
                 error, error_code, ..
@@ -514,6 +533,19 @@ impl RenderLoop {
                 let x0 = cells_w - ART_W - ART_PAD;
                 let y0 = ART_PAD;
                 state.album_art.paint(&mut state.grid, x0, y0, ART_W, ART_H);
+            }
+
+            // Now-playing strip: bottom 2 rows, only when we have metadata.
+            if state.now_playing.artist.is_some() || state.now_playing.title.is_some() {
+                let np_y = cells_h.saturating_sub(2);
+                render_now_playing(
+                    &mut state.grid,
+                    np_y,
+                    0,
+                    cells_w,
+                    &state.now_playing,
+                    &state.theme,
+                );
             }
 
             // Picker overlay with fade transitions.

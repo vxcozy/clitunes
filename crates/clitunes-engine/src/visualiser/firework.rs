@@ -202,6 +202,9 @@ impl Visualiser for Firework {
                 }
                 Phase::Exploding { particles, .. } => {
                     for p in particles {
+                        if p.x < 0.0 || p.y < 0.0 {
+                            continue;
+                        }
                         let px = p.x as u16;
                         let py = p.y as u16;
                         if px < buf_w && py < buf_h {

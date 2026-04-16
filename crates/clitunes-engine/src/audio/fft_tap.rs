@@ -21,6 +21,18 @@ pub struct FftSnapshot {
     pub magnitudes: Vec<f32>,
     pub sample_rate: u32,
     pub fft_size: usize,
+    pub samples: Vec<f32>,
+}
+
+impl FftSnapshot {
+    pub fn new(magnitudes: Vec<f32>, sample_rate: u32, fft_size: usize) -> Self {
+        Self {
+            magnitudes,
+            sample_rate,
+            fft_size,
+            samples: vec![],
+        }
+    }
 }
 
 impl FftTap {
@@ -62,7 +74,7 @@ impl FftTap {
             };
             *slot = f * self.window[i];
         }
-        // realfft writes into scratch_out in place.
+        let samples = self.scratch_in.clone();
         let _ = self
             .planner_fft
             .process(&mut self.scratch_in, &mut self.scratch_out);
@@ -77,6 +89,7 @@ impl FftTap {
             magnitudes,
             sample_rate,
             fft_size: self.fft_size,
+            samples,
         }
     }
 
@@ -92,6 +105,7 @@ impl FftTap {
             };
             *slot = f * self.window[i];
         }
+        let samples = self.scratch_in.clone();
         let _ = self
             .planner_fft
             .process(&mut self.scratch_in, &mut self.scratch_out);
@@ -103,6 +117,7 @@ impl FftTap {
                 .collect(),
             sample_rate,
             fft_size: self.fft_size,
+            samples,
         }
     }
 }
@@ -148,5 +163,48 @@ mod tests {
             err < 100.0,
             "peak should be near 1000Hz, got {peak_freq} Hz"
         );
+    }
+
+    #[test]
+    fn snapshot_contains_samples_of_correct_length() {
+        let mut tap = FftTap::new(1024);
+        let frames = vec![StereoFrame::SILENCE; 1024];
+        let snap = tap.snapshot_from(&frames, PcmFormat::STUDIO.sample_rate);
+        assert_eq!(snap.samples.len(), 1024);
+    }
+
+    #[test]
+    fn samples_reflect_input_waveform() {
+        let mut tap = FftTap::new(1024);
+        let sr = 48_000_f32;
+        let freq = 440.0_f32;
+        let frames: Vec<_> = (0..1024)
+            .map(|i| {
+                let s = (std::f32::consts::TAU * freq * i as f32 / sr).sin() * 0.8;
+                StereoFrame { l: s, r: s }
+            })
+            .collect();
+        let snap = tap.snapshot_from(&frames, sr as u32);
+        assert_eq!(snap.samples.len(), 1024);
+        let peak = snap.samples.iter().copied().fold(0.0_f32, f32::max);
+        assert!(peak > 0.1, "sine input should produce non-trivial samples, peak={peak}");
+    }
+
+    #[test]
+    fn silent_input_gives_near_zero_samples() {
+        let mut tap = FftTap::new(1024);
+        let frames = vec![StereoFrame::SILENCE; 1024];
+        let snap = tap.snapshot_from(&frames, PcmFormat::STUDIO.sample_rate);
+        let max_abs: f32 = snap.samples.iter().map(|s| s.abs()).fold(0.0, f32::max);
+        assert!(max_abs < 1e-6, "silence should give near-zero samples, got {max_abs}");
+    }
+
+    #[test]
+    fn new_constructor_defaults_empty_samples() {
+        let snap = FftSnapshot::new(vec![1.0, 2.0], 44_100, 4);
+        assert!(snap.samples.is_empty());
+        assert_eq!(snap.magnitudes, vec![1.0, 2.0]);
+        assert_eq!(snap.sample_rate, 44_100);
+        assert_eq!(snap.fft_size, 4);
     }
 }

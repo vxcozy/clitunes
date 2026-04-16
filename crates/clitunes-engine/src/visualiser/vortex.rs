@@ -19,6 +19,7 @@ use std::time::Instant;
 use crate::audio::FftSnapshot;
 use crate::visualiser::cell_grid::{Cell, CellGrid};
 use crate::visualiser::density_ramp::DensityRamp;
+use crate::visualiser::energy::EnergyTracker;
 use crate::visualiser::palette::{f32_to_u8, hsv_to_rgb, lerp};
 use crate::visualiser::{Rgb, SurfaceKind, TuiContext, Visualiser, VisualiserId};
 
@@ -39,7 +40,7 @@ pub struct Vortex {
     start: Instant,
     ramp: DensityRamp,
     /// Smoothed audio energy used to modulate spiral dynamics.
-    energy: f32,
+    energy: EnergyTracker,
 }
 
 impl Vortex {
@@ -47,20 +48,10 @@ impl Vortex {
         Self {
             start: Instant::now(),
             ramp: DensityRamp::detailed(),
-            energy: 0.0,
+            energy: EnergyTracker::new(0.5, 0.9, 500.0),
         }
     }
 
-    fn update_energy(&mut self, fft: &FftSnapshot) {
-        let sum: f32 = fft.magnitudes.iter().sum();
-        let norm = (sum / fft.magnitudes.len().max(1) as f32 / 500.0).min(1.0);
-        // Attack-release smoothing: ~0.5 attack, ~0.9 release.
-        if norm > self.energy {
-            self.energy = 0.5 * self.energy + 0.5 * norm;
-        } else {
-            self.energy = 0.9 * self.energy + 0.1 * norm;
-        }
-    }
 }
 
 impl Default for Vortex {
@@ -79,7 +70,7 @@ impl Visualiser for Vortex {
     }
 
     fn render_tui(&mut self, ctx: &mut TuiContext<'_>, fft: &FftSnapshot) {
-        self.update_energy(fft);
+        self.energy.update(fft);
 
         let grid: &mut CellGrid = &mut *ctx.grid;
         let w = grid.width();
@@ -98,7 +89,7 @@ impl Visualiser for Vortex {
         let half_diag = (cx * cx + cy * cy).sqrt().max(1.0);
 
         let t = self.start.elapsed().as_secs_f32();
-        let energy = self.energy;
+        let energy = self.energy.energy();
 
         // Energy-modulated twist: spirals tighten slightly on beat.
         let twist_1 = TWIST_1 + energy * 0.5;
@@ -170,11 +161,7 @@ mod tests {
     #[test]
     fn render_paints_whole_grid() {
         let mut vortex = Vortex::new();
-        let fft = FftSnapshot {
-            magnitudes: vec![100.0; 128],
-            sample_rate: 48_000,
-            fft_size: 256,
-        };
+        let fft = FftSnapshot::new(vec![100.0; 128], 48_000, 256);
         let mut grid = CellGrid::new(40, 12);
         {
             let mut ctx = TuiContext { grid: &mut grid };
@@ -192,15 +179,11 @@ mod tests {
     #[test]
     fn energy_smoothing_responds_to_input() {
         let mut vortex = Vortex::new();
-        assert_eq!(vortex.energy, 0.0);
-        let loud = FftSnapshot {
-            magnitudes: vec![5000.0; 64],
-            sample_rate: 48_000,
-            fft_size: 128,
-        };
+        assert_eq!(vortex.energy.energy(), 0.0);
+        let loud = FftSnapshot::new(vec![5000.0; 64], 48_000, 128);
         for _ in 0..20 {
-            vortex.update_energy(&loud);
+            vortex.energy.update(&loud);
         }
-        assert!(vortex.energy > 0.5);
+        assert!(vortex.energy.energy() > 0.5);
     }
 }

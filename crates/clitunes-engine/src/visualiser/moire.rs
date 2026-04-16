@@ -19,6 +19,7 @@ use std::time::Instant;
 use crate::audio::FftSnapshot;
 use crate::visualiser::cell_grid::{Cell, CellGrid};
 use crate::visualiser::density_ramp::DensityRamp;
+use crate::visualiser::energy::EnergyTracker;
 use crate::visualiser::palette::{f32_to_u8, hsv_to_rgb, lerp};
 use crate::visualiser::{Rgb, SurfaceKind, TuiContext, Visualiser, VisualiserId};
 
@@ -47,7 +48,7 @@ pub struct Moire {
     start: Instant,
     ramp: DensityRamp,
     /// Smoothed audio energy; modulates ring freq and orbital speed.
-    energy: f32,
+    energy: EnergyTracker,
 }
 
 impl Moire {
@@ -55,20 +56,10 @@ impl Moire {
         Self {
             start: Instant::now(),
             ramp: DensityRamp::detailed(),
-            energy: 0.0,
+            energy: EnergyTracker::new(0.5, 0.9, 500.0),
         }
     }
 
-    fn update_energy(&mut self, fft: &FftSnapshot) {
-        let sum: f32 = fft.magnitudes.iter().sum();
-        let norm = (sum / fft.magnitudes.len().max(1) as f32 / 500.0).min(1.0);
-        // Attack-release smoothing.
-        if norm > self.energy {
-            self.energy = 0.5 * self.energy + 0.5 * norm;
-        } else {
-            self.energy = 0.9 * self.energy + 0.1 * norm;
-        }
-    }
 }
 
 impl Default for Moire {
@@ -87,7 +78,7 @@ impl Visualiser for Moire {
     }
 
     fn render_tui(&mut self, ctx: &mut TuiContext<'_>, fft: &FftSnapshot) {
-        self.update_energy(fft);
+        self.energy.update(fft);
 
         let t = self.start.elapsed().as_secs_f32();
         let grid: &mut CellGrid = &mut *ctx.grid;
@@ -107,8 +98,8 @@ impl Visualiser for Moire {
 
         // Audio-driven modulation: energy makes the rings breathe and the
         // centres orbit faster.
-        let freq_mod = RING_FREQ + 0.15 * self.energy;
-        let speed_mul = 1.0 + 0.6 * self.energy;
+        let freq_mod = RING_FREQ + 0.15 * self.energy.energy();
+        let speed_mul = 1.0 + 0.6 * self.energy.energy();
 
         // Compute the three orbiting centres.
         let mut centres = [(0.0f32, 0.0f32); 3];
@@ -185,11 +176,7 @@ mod tests {
     #[test]
     fn render_paints_whole_grid() {
         let mut m = Moire::new();
-        let fft = FftSnapshot {
-            magnitudes: vec![100.0; 128],
-            sample_rate: 48_000,
-            fft_size: 256,
-        };
+        let fft = FftSnapshot::new(vec![100.0; 128], 48_000, 256);
         let mut grid = CellGrid::new(40, 12);
         {
             let mut ctx = TuiContext { grid: &mut grid };
@@ -206,26 +193,18 @@ mod tests {
     #[test]
     fn energy_smoothing_responds_to_input() {
         let mut m = Moire::new();
-        assert_eq!(m.energy, 0.0);
-        let loud = FftSnapshot {
-            magnitudes: vec![5000.0; 64],
-            sample_rate: 48_000,
-            fft_size: 128,
-        };
+        assert_eq!(m.energy.energy(), 0.0);
+        let loud = FftSnapshot::new(vec![5000.0; 64], 48_000, 128);
         for _ in 0..20 {
-            m.update_energy(&loud);
+            m.energy.update(&loud);
         }
-        assert!(m.energy > 0.5, "energy should ramp up with loud input");
+        assert!(m.energy.energy() > 0.5, "energy should ramp up with loud input");
     }
 
     #[test]
     fn zero_size_grid_does_not_panic() {
         let mut m = Moire::new();
-        let fft = FftSnapshot {
-            magnitudes: vec![0.0; 64],
-            sample_rate: 48_000,
-            fft_size: 128,
-        };
+        let fft = FftSnapshot::new(vec![0.0; 64], 48_000, 128);
         let mut grid = CellGrid::new(0, 0);
         let mut ctx = TuiContext { grid: &mut grid };
         m.render_tui(&mut ctx, &fft);

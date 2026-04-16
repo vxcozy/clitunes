@@ -17,6 +17,7 @@ use std::time::Instant;
 use crate::audio::FftSnapshot;
 use crate::visualiser::cell_grid::{Cell, CellGrid};
 use crate::visualiser::density_ramp::DensityRamp;
+use crate::visualiser::energy::EnergyTracker;
 use crate::visualiser::palette::{f32_to_u8, hsv_to_rgb, lerp};
 use crate::visualiser::{Rgb, SurfaceKind, TuiContext, Visualiser, VisualiserId};
 
@@ -33,7 +34,7 @@ pub struct Plasma {
     start: Instant,
     ramp: DensityRamp,
     /// Smoothed audio energy used to modulate plasma speed.
-    energy: f32,
+    energy: EnergyTracker,
 }
 
 impl Plasma {
@@ -41,20 +42,10 @@ impl Plasma {
         Self {
             start: Instant::now(),
             ramp: DensityRamp::detailed(),
-            energy: 0.0,
+            energy: EnergyTracker::new(0.6, 0.9, 500.0),
         }
     }
 
-    fn update_energy(&mut self, fft: &FftSnapshot) {
-        let sum: f32 = fft.magnitudes.iter().sum();
-        let norm = (sum / fft.magnitudes.len().max(1) as f32 / 500.0).min(1.0);
-        // Attack-release smoothing.
-        if norm > self.energy {
-            self.energy = 0.6 * self.energy + 0.4 * norm;
-        } else {
-            self.energy = 0.9 * self.energy + 0.1 * norm;
-        }
-    }
 }
 
 impl Default for Plasma {
@@ -73,11 +64,11 @@ impl Visualiser for Plasma {
     }
 
     fn render_tui(&mut self, ctx: &mut TuiContext<'_>, fft: &FftSnapshot) {
-        self.update_energy(fft);
+        self.energy.update(fft);
 
         // Base time + an energy-modulated acceleration. Idle plasma drifts
         // at real time; a loud passage speeds it up to ~1.6× for a beat.
-        let t = self.start.elapsed().as_secs_f32() * (1.0 + 0.6 * self.energy);
+        let t = self.start.elapsed().as_secs_f32() * (1.0 + 0.6 * self.energy.energy());
         let grid: &mut CellGrid = &mut *ctx.grid;
         let w = grid.width();
         let h = grid.height();
@@ -143,11 +134,7 @@ mod tests {
     #[test]
     fn render_paints_whole_grid() {
         let mut plasma = Plasma::new();
-        let fft = FftSnapshot {
-            magnitudes: vec![100.0; 128],
-            sample_rate: 48_000,
-            fft_size: 256,
-        };
+        let fft = FftSnapshot::new(vec![100.0; 128], 48_000, 256);
         let mut grid = CellGrid::new(40, 12);
         {
             let mut ctx = TuiContext { grid: &mut grid };
@@ -166,15 +153,11 @@ mod tests {
     #[test]
     fn energy_smoothing_responds_to_input() {
         let mut plasma = Plasma::new();
-        assert_eq!(plasma.energy, 0.0);
-        let loud = FftSnapshot {
-            magnitudes: vec![5000.0; 64],
-            sample_rate: 48_000,
-            fft_size: 128,
-        };
+        assert_eq!(plasma.energy.energy(), 0.0);
+        let loud = FftSnapshot::new(vec![5000.0; 64], 48_000, 128);
         for _ in 0..20 {
-            plasma.update_energy(&loud);
+            plasma.energy.update(&loud);
         }
-        assert!(plasma.energy > 0.5);
+        assert!(plasma.energy.energy() > 0.5);
     }
 }

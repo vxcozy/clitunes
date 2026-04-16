@@ -198,11 +198,7 @@ mod tests {
     #[test]
     fn render_paints_whole_grid() {
         let mut vis = Tideline::new();
-        let fft = FftSnapshot {
-            magnitudes: vec![500.0; 128],
-            sample_rate: 48_000,
-            fft_size: 256,
-        };
+        let fft = FftSnapshot::new(vec![500.0; 128], 48_000, 256);
         let mut grid = CellGrid::new(40, 12);
         {
             let mut ctx = TuiContext { grid: &mut grid };
@@ -216,11 +212,7 @@ mod tests {
     #[test]
     fn silent_input_still_renders_background() {
         let mut vis = Tideline::new();
-        let fft = FftSnapshot {
-            magnitudes: vec![0.0; 128],
-            sample_rate: 48_000,
-            fft_size: 256,
-        };
+        let fft = FftSnapshot::new(vec![0.0; 128], 48_000, 256);
         let mut grid = CellGrid::new(40, 12);
         {
             let mut ctx = TuiContext { grid: &mut grid };
@@ -241,11 +233,7 @@ mod tests {
     #[test]
     fn non_silent_has_brighter_center() {
         let mut vis = Tideline::new();
-        let fft = FftSnapshot {
-            magnitudes: vec![2000.0; 128],
-            sample_rate: 48_000,
-            fft_size: 256,
-        };
+        let fft = FftSnapshot::new(vec![2000.0; 128], 48_000, 256);
         let mut grid = CellGrid::new(40, 20);
         // Render a few frames so smoothing converges.
         for _ in 0..10 {

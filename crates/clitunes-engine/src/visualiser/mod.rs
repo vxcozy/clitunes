@@ -22,9 +22,11 @@ pub use clitunes_core::{SurfaceKind, VisualiserId};
 
 pub mod ansi_writer;
 pub mod auralis;
+pub mod braille;
 pub mod cascade;
 pub mod cell_grid;
 pub mod density_ramp;
+pub mod energy;
 pub mod fire;
 pub mod matrix;
 pub mod metaballs;
@@ -36,6 +38,9 @@ pub mod starfield;
 pub mod tideline;
 pub mod tunnel;
 pub mod vortex;
+pub mod wave;
+pub mod scope;
+pub mod heartbeat;
 
 pub use ansi_writer::AnsiWriter;
 pub use auralis::Auralis;
@@ -52,6 +57,9 @@ pub use starfield::Starfield;
 pub use tideline::Tideline;
 pub use tunnel::Tunnel;
 pub use vortex::Vortex;
+pub use wave::Wave;
+pub use scope::Scope;
+pub use heartbeat::Heartbeat;
 
 /// Context passed to a visualiser each frame. The visualiser paints into
 /// the mutable `grid`; the main loop's ANSI writer emits it afterwards.

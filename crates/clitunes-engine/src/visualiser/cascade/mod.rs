@@ -153,11 +153,7 @@ mod tests {
     #[test]
     fn render_paints_whole_grid() {
         let mut cascade = Cascade::new();
-        let fft = FftSnapshot {
-            magnitudes: vec![500.0; 128],
-            sample_rate: 48_000,
-            fft_size: 256,
-        };
+        let fft = FftSnapshot::new(vec![500.0; 128], 48_000, 256);
         let mut grid = CellGrid::new(40, 12);
 
         // Push enough frames to fill the grid (12 rows * 2 virtual = 24).
@@ -186,11 +182,7 @@ mod tests {
     #[test]
     fn silent_input_produces_dark_output() {
         let mut cascade = Cascade::new();
-        let fft = FftSnapshot {
-            magnitudes: vec![0.0; 128],
-            sample_rate: 48_000,
-            fft_size: 256,
-        };
+        let fft = FftSnapshot::new(vec![0.0; 128], 48_000, 256);
         let mut grid = CellGrid::new(40, 12);
 
         for _ in 0..30 {
@@ -225,11 +217,7 @@ mod tests {
     #[test]
     fn empty_magnitudes_do_not_panic() {
         let mut cascade = Cascade::new();
-        let fft = FftSnapshot {
-            magnitudes: vec![],
-            sample_rate: 48_000,
-            fft_size: 0,
-        };
+        let fft = FftSnapshot::new(vec![], 48_000, 0);
         let mut grid = CellGrid::new(10, 5);
         let mut ctx = TuiContext { grid: &mut grid };
         cascade.render_tui(&mut ctx, &fft);

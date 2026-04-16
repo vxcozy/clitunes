@@ -22,8 +22,8 @@ use clitunes_engine::tui::theme::Theme;
 
 use crate::client::transition_controller::TransitionController;
 use clitunes_engine::visualiser::{
-    AnsiWriter, CellGrid, Fire, Matrix, Metaballs, Moire, Plasma, Ripples, TuiContext, Tunnel,
-    Visualiser, Vortex,
+    AnsiWriter, CellGrid, Fire, Heartbeat, Matrix, Metaballs, Moire, Plasma, Ripples, Scope,
+    TuiContext, Tunnel, Visualiser, Vortex, Wave,
 };
 
 /// FFT window size. 2048 samples at 48 kHz gives ~43 ms windows and
@@ -103,6 +103,9 @@ impl AppState {
             Box::new(Fire::new()),
             Box::new(Matrix::new()),
             Box::new(Moire::new()),
+            Box::new(Wave::new()),
+            Box::new(Scope::new()),
+            Box::new(Heartbeat::new()),
         ];
         let active_idx = 0; // Plasma — the strongest first impression.
 

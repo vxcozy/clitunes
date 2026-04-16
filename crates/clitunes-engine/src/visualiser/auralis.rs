@@ -176,11 +176,7 @@ mod tests {
     #[test]
     fn render_paints_whole_grid() {
         let mut auralis = Auralis::new();
-        let fft = FftSnapshot {
-            magnitudes: vec![500.0; 128],
-            sample_rate: 48_000,
-            fft_size: 256,
-        };
+        let fft = FftSnapshot::new(vec![500.0; 128], 48_000, 256);
         let mut grid = CellGrid::new(40, 12);
         {
             let mut ctx = TuiContext { grid: &mut grid };

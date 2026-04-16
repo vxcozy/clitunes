@@ -18,6 +18,9 @@ pub enum VisualiserId {
     Matrix,
     Moire,
     Vortex,
+    Wave,
+    Scope,
+    Heartbeat,
 }
 
 impl VisualiserId {
@@ -35,6 +38,9 @@ impl VisualiserId {
             Self::Matrix => "matrix",
             Self::Moire => "moire",
             Self::Vortex => "vortex",
+            Self::Wave => "wave",
+            Self::Scope => "scope",
+            Self::Heartbeat => "heartbeat",
         }
     }
 
@@ -52,6 +58,9 @@ impl VisualiserId {
             "matrix" => Some(Self::Matrix),
             "moire" => Some(Self::Moire),
             "vortex" => Some(Self::Vortex),
+            "wave" => Some(Self::Wave),
+            "scope" => Some(Self::Scope),
+            "heartbeat" => Some(Self::Heartbeat),
             _ => None,
         }
     }

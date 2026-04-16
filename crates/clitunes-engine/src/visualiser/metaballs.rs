@@ -9,6 +9,7 @@ use std::time::Instant;
 use crate::audio::FftSnapshot;
 use crate::visualiser::cell_grid::{Cell, CellGrid};
 use crate::visualiser::density_ramp::DensityRamp;
+use crate::visualiser::energy::EnergyTracker;
 use crate::visualiser::palette::{f32_to_u8, hsv_to_rgb, lerp};
 use crate::visualiser::{Rgb, SurfaceKind, TuiContext, Visualiser, VisualiserId};
 
@@ -29,7 +30,7 @@ pub struct Metaballs {
     start: Instant,
     balls: [Ball; NUM_BALLS],
     ramp: DensityRamp,
-    energy: f32,
+    energy: EnergyTracker,
 }
 
 impl Metaballs {
@@ -96,19 +97,10 @@ impl Metaballs {
             start: Instant::now(),
             balls,
             ramp: DensityRamp::midrange(),
-            energy: 0.0,
+            energy: EnergyTracker::new(0.6, 0.92, 500.0),
         }
     }
 
-    fn update_energy(&mut self, fft: &FftSnapshot) {
-        let sum: f32 = fft.magnitudes.iter().sum();
-        let norm = (sum / fft.magnitudes.len().max(1) as f32 / 500.0).min(1.0);
-        if norm > self.energy {
-            self.energy = 0.6 * self.energy + 0.4 * norm;
-        } else {
-            self.energy = 0.92 * self.energy + 0.08 * norm;
-        }
-    }
 }
 
 impl Default for Metaballs {
@@ -127,8 +119,8 @@ impl Visualiser for Metaballs {
     }
 
     fn render_tui(&mut self, ctx: &mut TuiContext<'_>, fft: &FftSnapshot) {
-        self.update_energy(fft);
-        let t = self.start.elapsed().as_secs_f32() * (1.0 + 0.5 * self.energy);
+        self.energy.update(fft);
+        let t = self.start.elapsed().as_secs_f32() * (1.0 + 0.5 * self.energy.energy());
 
         let grid: &mut CellGrid = &mut *ctx.grid;
         let w = grid.width();
@@ -152,7 +144,7 @@ impl Visualiser for Metaballs {
             let ny = 0.5 + ball.amp_y * (t * ball.freq_y + ball.phase_y).cos();
             pos[i] = (nx * w_f, ny * h_f);
             // Radius in virtual-pixel units. Breathes with energy.
-            let r = ball.radius * diag * (0.85 + 0.3 * self.energy);
+            let r = ball.radius * diag * (0.85 + 0.3 * self.energy.energy());
             radii2[i] = r * r;
         }
 
@@ -208,11 +200,7 @@ mod tests {
     #[test]
     fn render_paints_whole_grid() {
         let mut m = Metaballs::new();
-        let fft = FftSnapshot {
-            magnitudes: vec![300.0; 64],
-            sample_rate: 48_000,
-            fft_size: 128,
-        };
+        let fft = FftSnapshot::new(vec![300.0; 64], 48_000, 128);
         let mut grid = CellGrid::new(30, 10);
         {
             let mut ctx = TuiContext { grid: &mut grid };

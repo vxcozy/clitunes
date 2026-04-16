@@ -93,6 +93,13 @@ Runs the Spotify OAuth flow and caches credentials. See
 | `tunnel` | Fly-through tunnel warped by mid-range frequencies |
 | `metaballs` | Floating blobs that merge and split with the music |
 | `starfield` | Depth-sorted stars accelerated by audio intensity |
+| `fire` | Cellular automaton fire with audio-driven roar |
+| `matrix` | Falling code rain with beat-synced glitch bursts |
+| `moire` | Overlapping interference patterns pulsing with bass |
+| `vortex` | Spiral tunnel warped by frequency bands |
+| `wave` | Braille oscilloscope tracing the raw audio waveform |
+| `scope` | Braille Lissajous XY plot with drifting phase offset |
+| `heartbeat` | Braille ECG-style scrolling pulse trace |
 
 ## Exit codes
 

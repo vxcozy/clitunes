@@ -7,11 +7,7 @@ use clitunes_engine::visualiser::{Cell, CellGrid, Rgb, TuiContext, Visualiser};
 #[test]
 fn cascade_accumulates_history_and_renders() {
     let mut cascade = Cascade::new();
-    let fft = FftSnapshot {
-        magnitudes: vec![500.0; 128],
-        sample_rate: 48_000,
-        fft_size: 256,
-    };
+    let fft = FftSnapshot::new(vec![500.0; 128], 48_000, 256);
     let mut grid = CellGrid::new(40, 12);
 
     // Push enough frames to fill the grid (12 rows * 2 virtual pixels = 24 history rows).
@@ -40,11 +36,7 @@ fn cascade_accumulates_history_and_renders() {
 #[test]
 fn cascade_renders_single_frame_without_panic() {
     let mut cascade = Cascade::new();
-    let fft = FftSnapshot {
-        magnitudes: vec![100.0; 64],
-        sample_rate: 44_100,
-        fft_size: 128,
-    };
+    let fft = FftSnapshot::new(vec![100.0; 64], 44_100, 128);
     let mut grid = CellGrid::new(20, 8);
     let mut ctx = TuiContext { grid: &mut grid };
     cascade.render_tui(&mut ctx, &fft);

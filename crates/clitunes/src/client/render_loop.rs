@@ -240,11 +240,11 @@ impl AppState {
                 tracing::info!(target: "clitunes", %reason, "daemon shutting down");
                 stop.store(true, Ordering::SeqCst);
             }
-            Event::SearchResults { query, items, .. } => {
-                // Ignore stale results — user has moved on.
-                if *query == self.picker_state.search_query {
-                    self.picker_state.set_search_results(items.clone());
-                }
+            // Ignore stale results — user has moved on.
+            Event::SearchResults { query, items, .. }
+                if *query == self.picker_state.search_query =>
+            {
+                self.picker_state.set_search_results(items.clone());
             }
             Event::LibraryResults {
                 category, items, ..

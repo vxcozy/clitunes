@@ -16,6 +16,9 @@ pub struct NowPlayingState {
     pub artist: Option<String>,
     pub title: Option<String>,
     pub album: Option<String>,
+    /// When set, a Spotify Connect client is controlling playback.
+    /// Rendered as a dim indicator on the artist line.
+    pub connect_device: Option<String>,
 }
 
 /// Render the 2-line now-playing strip starting at row `y`.
@@ -54,10 +57,22 @@ pub fn render_now_playing(
 
     let indent = x0 + 2;
 
-    // Line 1: artist (bright).
+    // Line 1: artist (bright), with optional Connect indicator right-aligned.
+    let connect_tag = state.connect_device.as_ref().map(|name| {
+        if name.is_empty() {
+            "[Connect]".to_string()
+        } else {
+            format!("[Connect: {name}]")
+        }
+    });
+    let tag_width = connect_tag.as_ref().map_or(0, |t| t.len() + 1);
     if let Some(ref artist) = state.artist {
-        let text = truncate_str(artist, w.saturating_sub(4));
+        let text = truncate_str(artist, w.saturating_sub(4 + tag_width));
         write_str(grid, indent, y, &text, bright, bg);
+    }
+    if let Some(ref tag) = connect_tag {
+        let tag_x = x1.saturating_sub(tag.len() as u16 + 2);
+        write_str(grid, tag_x, y, tag, dim, bg);
     }
 
     // Line 2: title — album (dim).
@@ -92,6 +107,7 @@ mod tests {
             artist: Some("Boards of Canada".into()),
             title: Some("Roygbiv".into()),
             album: Some("Music Has the Right to Children".into()),
+            connect_device: None,
         };
         render_now_playing(&mut grid, 0, 0, 60, &state, &theme);
 
@@ -109,6 +125,7 @@ mod tests {
             artist: Some("Artist".into()),
             title: Some("Track".into()),
             album: Some("Album".into()),
+            connect_device: None,
         };
         render_now_playing(&mut grid, 0, 0, 60, &state, &theme);
 
@@ -127,6 +144,7 @@ mod tests {
             artist: Some("A Very Long Artist Name That Should Be Truncated".into()),
             title: Some("Track".into()),
             album: None,
+            connect_device: None,
         };
         render_now_playing(&mut grid, 0, 0, 30, &state, &theme);
 
@@ -143,6 +161,7 @@ mod tests {
             artist: None,
             title: Some("Track Title".into()),
             album: None,
+            connect_device: None,
         };
         render_now_playing(&mut grid, 0, 0, 60, &state, &theme);
 
@@ -150,5 +169,43 @@ mod tests {
         let w = grid.width() as usize;
         let line1_start = w + 2; // y=1, x=2
         assert_eq!(grid.cells()[line1_start].ch, 'T');
+    }
+
+    #[test]
+    fn now_playing_connect_indicator() {
+        let mut grid = CellGrid::new(60, 4);
+        let theme = Theme::default();
+        let state = NowPlayingState {
+            artist: Some("Artist".into()),
+            title: Some("Track".into()),
+            album: None,
+            connect_device: Some("iPhone".into()),
+        };
+        render_now_playing(&mut grid, 0, 0, 60, &state, &theme);
+
+        let row0: String = (0..60).map(|x| grid.cells()[x].ch).collect();
+        assert!(
+            row0.contains("[Connect: iPhone]"),
+            "connect indicator missing from row: {row0:?}"
+        );
+    }
+
+    #[test]
+    fn now_playing_connect_indicator_no_name() {
+        let mut grid = CellGrid::new(60, 4);
+        let theme = Theme::default();
+        let state = NowPlayingState {
+            artist: Some("Artist".into()),
+            title: Some("Track".into()),
+            album: None,
+            connect_device: Some(String::new()),
+        };
+        render_now_playing(&mut grid, 0, 0, 60, &state, &theme);
+
+        let row0: String = (0..60).map(|x| grid.cells()[x].ch).collect();
+        assert!(
+            row0.contains("[Connect]"),
+            "connect indicator missing from row: {row0:?}"
+        );
     }
 }

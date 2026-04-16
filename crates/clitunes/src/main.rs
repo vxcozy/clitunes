@@ -12,6 +12,7 @@
 //! - `clitunes source radio <uuid>`    → headless source switch
 //! - `clitunes source local <path>`    → headless source switch
 //! - `clitunes status [--json]`        → one-shot status query
+//! - `clitunes connect disconnect`      → disconnect active Spotify Connect session
 //! - `clitunes auth`                   → interactive Spotify auth (headless-safe)
 
 use std::io::IsTerminal;
@@ -534,6 +535,16 @@ impl CliMode {
                     ),
                 }
             }
+            "connect" => {
+                let sub = args.get(1).map(|s| s.as_str());
+                match sub {
+                    Some("disconnect") => Ok(CliMode::Headless(Verb::ConnectDisconnect)),
+                    Some(other) => {
+                        anyhow::bail!("unknown connect subcommand: {other}. Expected: disconnect")
+                    }
+                    None => anyhow::bail!("connect requires a subcommand: disconnect"),
+                }
+            }
             "status" => {
                 if args.get(1).map(|a| a.as_str()) == Some("--json") || args.len() == 1 {
                     Ok(CliMode::StatusJson)
@@ -641,6 +652,7 @@ USAGE:
     clitunes search <query> [limit]         Search Spotify; prints SearchResults JSON
     clitunes browse <category> [limit]      List saved library (saved_tracks | saved_albums | playlists | recently_played)
     clitunes browse-playlist <id> [limit]   List tracks in a Spotify playlist
+    clitunes connect disconnect              Disconnect active Spotify Connect session
     clitunes status [--json]                Print current status as JSON
     clitunes auth                           Authenticate with Spotify (headless-safe)
 

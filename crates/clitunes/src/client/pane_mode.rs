@@ -184,6 +184,7 @@ fn run_now_playing_pane(config: PaneModeConfig) -> Result<()> {
     let mut album: Option<String> = None;
     let mut station_or_path: Option<String> = None;
     let mut source: Option<String> = None;
+    let mut connect_device: Option<String> = None;
 
     while !config.stop.load(Ordering::Relaxed) {
         while let Ok(ev) = config.event_rx.try_recv() {
@@ -205,6 +206,12 @@ fn run_now_playing_pane(config: PaneModeConfig) -> Result<()> {
                 } => {
                     source = s;
                     station_or_path = sp;
+                }
+                Event::ConnectDeviceConnected { remote_name } => {
+                    connect_device = Some(remote_name.unwrap_or_default());
+                }
+                Event::ConnectDeviceDisconnected => {
+                    connect_device = None;
                 }
                 Event::DaemonShuttingDown { .. } => {
                     config.stop.store(true, Ordering::SeqCst);
@@ -231,19 +238,33 @@ fn run_now_playing_pane(config: PaneModeConfig) -> Result<()> {
         let display_artist = artist.as_deref().unwrap_or("");
         let display_source = source.as_deref().unwrap_or("");
 
+        let connect_tag = connect_device.as_ref().map(|name| {
+            if name.is_empty() {
+                "[Connect]".to_string()
+            } else {
+                format!("[Connect: {name}]")
+            }
+        });
+
         if rows >= 3 {
             // 3-line layout: source/station, artist, title [album]
-            let line1 = format!(
-                "\x1b[2m{}\x1b[0m",
-                truncate(
-                    &format!(
-                        "{} ▸ {}",
-                        display_source,
-                        station_or_path.as_deref().unwrap_or("")
-                    ),
-                    cols as usize
-                )
+            let source_info = format!(
+                "{} ▸ {}",
+                display_source,
+                station_or_path.as_deref().unwrap_or("")
             );
+            let line1 = if let Some(ref tag) = connect_tag {
+                let col = cols as usize;
+                if col > tag.len() + 4 {
+                    let left = truncate(&source_info, col - tag.len() - 2);
+                    let pad = col.saturating_sub(left.len() + tag.len());
+                    format!("\x1b[2m{left}{:>pad$}{tag}\x1b[0m", "")
+                } else {
+                    format!("\x1b[2m{}\x1b[0m", truncate(&source_info, col))
+                }
+            } else {
+                format!("\x1b[2m{}\x1b[0m", truncate(&source_info, cols as usize))
+            };
             let line2 = if display_artist.is_empty() {
                 String::new()
             } else {

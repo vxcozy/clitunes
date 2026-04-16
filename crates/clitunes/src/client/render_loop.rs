@@ -180,6 +180,8 @@ impl AppState {
                 Some(url) => self.album_art.request(url),
                 None => self.album_art.clear(),
             },
+            Event::ConnectDeviceConnected { .. } | Event::ConnectDeviceDisconnected => {}
+
             Event::SourceError {
                 error, error_code, ..
             } => {

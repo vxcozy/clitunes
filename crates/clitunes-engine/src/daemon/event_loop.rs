@@ -234,6 +234,8 @@ impl DaemonEventLoop {
         let webapi_cache = Arc::new(WebApiCache::new(Arc::clone(&spotify_handle)));
         #[cfg(feature = "webapi")]
         let verb_webapi = Arc::clone(&webapi_cache);
+        #[cfg(feature = "connect")]
+        let verb_disconnect_tx = connect_runtime.as_ref().map(|rt| rt.disconnect_sender());
         tokio::spawn(async move {
             dispatch_verbs(
                 &mut verb_rx,
@@ -244,6 +246,8 @@ impl DaemonEventLoop {
                 &verb_last_state,
                 #[cfg(feature = "webapi")]
                 &verb_webapi,
+                #[cfg(feature = "connect")]
+                verb_disconnect_tx,
             )
             .await;
         });
@@ -532,6 +536,7 @@ async fn dispatch_verbs(
     stop: &Arc<AtomicBool>,
     last_state: &Arc<Mutex<Option<Event>>>,
     #[cfg(feature = "webapi")] webapi_cache: &Arc<WebApiCache>,
+    #[cfg(feature = "connect")] connect_disconnect_tx: Option<mpsc::UnboundedSender<()>>,
 ) {
     while let Some((envelope, reply_tx)) = verb_rx.recv().await {
         if stop.load(Ordering::Relaxed) {
@@ -698,6 +703,20 @@ async fn dispatch_verbs(
                 let _ = reply_tx.try_send(Event::command_err(
                     cmd_id,
                     "browse/search not enabled in this build",
+                ));
+            }
+            #[cfg(feature = "connect")]
+            Verb::ConnectDisconnect => {
+                if let Some(ref tx) = connect_disconnect_tx {
+                    let _ = tx.send(());
+                }
+                let _ = reply_tx.try_send(Event::command_ok(cmd_id));
+            }
+            #[cfg(not(feature = "connect"))]
+            Verb::ConnectDisconnect => {
+                let _ = reply_tx.try_send(Event::command_err(
+                    cmd_id,
+                    "Spotify Connect not enabled in this build",
                 ));
             }
         }

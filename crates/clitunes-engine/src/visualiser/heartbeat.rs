@@ -93,18 +93,12 @@ impl Visualiser for Heartbeat {
         };
 
         // Scroll history left, push new value.
-        if self.history.len() > 1 {
-            self.history.remove(0);
-        }
-        self.history.push(new_val);
-
-        // Ensure history length matches sub-pixel width.
-        while self.history.len() < sub_w {
-            self.history.insert(0, 0.0);
-        }
-        if self.history.len() > sub_w {
-            let excess = self.history.len() - sub_w;
-            self.history.drain(0..excess);
+        let len = self.history.len();
+        if len > 1 {
+            self.history.copy_within(1.., 0);
+            self.history[len - 1] = new_val;
+        } else if len == 1 {
+            self.history[0] = new_val;
         }
 
         // Draw the trace using line() between consecutive points.

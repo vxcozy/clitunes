@@ -109,7 +109,7 @@ impl Visualiser for ClassicPeak {
     }
 
     fn render_tui(&mut self, ctx: &mut TuiContext<'_>, fft: &FftSnapshot) {
-        let _energy = self.energy.update(fft);
+        self.energy.update(fft);
 
         let grid: &mut CellGrid = ctx.grid;
         let w = grid.width() as usize;
@@ -120,8 +120,8 @@ impl Visualiser for ClassicPeak {
 
         // Decide band count and bar layout.
         let band_count = (w / 2).min(64).max(1);
-        let bar_width = if band_count * 3 <= w { 2 } else { 2 };
         let cell_per_bar = if band_count * 3 <= w { 3 } else { 2 };
+        let bar_width = cell_per_bar - 1;
         let total = band_count * cell_per_bar;
         let x_offset = if total < w { (w - total) / 2 } else { 0 };
 

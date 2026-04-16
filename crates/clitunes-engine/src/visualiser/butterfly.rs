@@ -50,7 +50,7 @@ impl Visualiser for Butterfly {
     }
 
     fn render_tui(&mut self, ctx: &mut TuiContext<'_>, fft: &FftSnapshot) {
-        let _energy = self.energy.update(fft);
+        self.energy.update(fft);
         self.frame = self.frame.wrapping_add(1);
 
         let grid: &mut CellGrid = ctx.grid;

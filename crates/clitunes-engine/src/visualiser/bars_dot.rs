@@ -111,7 +111,7 @@ impl Visualiser for BarsDot {
     }
 
     fn render_tui(&mut self, ctx: &mut TuiContext<'_>, fft: &FftSnapshot) {
-        let _energy = self.energy.update(fft);
+        self.energy.update(fft);
         self.frame = self.frame.wrapping_add(1);
 
         let grid: &mut CellGrid = ctx.grid;
@@ -138,7 +138,7 @@ impl Visualiser for BarsDot {
         for (band, &height) in self.bar_heights.iter().enumerate() {
             let col_start = band * bw / num_bands;
             let col_end = (band + 1) * bw / num_bands;
-            let fill_h = (height * bh as f32).round() as usize;
+            let fill_h = (height * bh as f32).round().min(bh as f32) as usize;
             if fill_h == 0 || col_start >= col_end {
                 continue;
             }

@@ -73,9 +73,6 @@ impl Visualiser for Scope {
 
         // Phase offset oscillates slowly for evolving Lissajous figures.
         let phase_offset = (self.frame % 512) as usize;
-        // Clamp so we always have valid pairs.
-        let max_i = samples.len() - 1;
-
         let mut prev: Option<(i32, i32)> = None;
         for i in 0..samples.len() {
             let x_sample = samples[i];
@@ -110,7 +107,6 @@ impl Visualiser for Scope {
             }
         });
 
-        let _ = max_i; // suppress unused warning
     }
 }
 

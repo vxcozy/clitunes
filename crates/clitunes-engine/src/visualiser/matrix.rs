@@ -15,6 +15,7 @@ use std::time::Instant;
 use crate::audio::FftSnapshot;
 use crate::visualiser::cell_grid::{Cell, CellGrid};
 use crate::visualiser::density_ramp::DensityRamp;
+use crate::visualiser::energy::EnergyTracker;
 use crate::visualiser::palette::{f32_to_u8, hsv_to_rgb, lerp};
 use crate::visualiser::{Rgb, SurfaceKind, TuiContext, Visualiser, VisualiserId};
 
@@ -28,7 +29,7 @@ pub struct Matrix {
     start: Instant,
     ramp: DensityRamp,
     /// Smoothed audio energy used to modulate drop speed.
-    energy: f32,
+    energy: EnergyTracker,
     /// xorshift32 state for random glyph cycling.
     rng_state: u32,
 }
@@ -38,7 +39,7 @@ impl Matrix {
         Self {
             start: Instant::now(),
             ramp: DensityRamp::new(" .·:;+xX#%@"),
-            energy: 0.0,
+            energy: EnergyTracker::new(0.5, 0.88, 500.0),
             rng_state: 0xDEAD_BEEF,
         }
     }
@@ -61,17 +62,6 @@ impl Matrix {
         h ^= h >> 16;
         h
     }
-
-    fn update_energy(&mut self, fft: &FftSnapshot) {
-        let sum: f32 = fft.magnitudes.iter().sum();
-        let norm = (sum / fft.magnitudes.len().max(1) as f32 / 500.0).min(1.0);
-        // Attack-release smoothing.
-        if norm > self.energy {
-            self.energy = 0.5 * self.energy + 0.5 * norm;
-        } else {
-            self.energy = 0.88 * self.energy + 0.12 * norm;
-        }
-    }
 }
 
 impl Default for Matrix {
@@ -90,7 +80,7 @@ impl Visualiser for Matrix {
     }
 
     fn render_tui(&mut self, ctx: &mut TuiContext<'_>, fft: &FftSnapshot) {
-        self.update_energy(fft);
+        self.energy.update(fft);
 
         let t = self.start.elapsed().as_secs_f32();
         let grid: &mut CellGrid = &mut *ctx.grid;
@@ -114,7 +104,7 @@ impl Visualiser for Matrix {
 
         // Speed multiplier from audio energy. Idle drift is 1.0; loud
         // passages push it up to ~2.0 for a rush effect.
-        let speed_mul = 1.0 + 1.0 * self.energy;
+        let speed_mul = 1.0 + 1.0 * self.energy.energy();
 
         // We need a frame counter for the head-glyph cycling effect.
         // Derive it from time at ~30 fps granularity.
@@ -199,8 +189,8 @@ impl Visualiser for Matrix {
 
         // Beat drops: when energy is high, inject a few extra bright
         // single-cell flashes at random positions for the "data burst" feel.
-        if self.energy > 0.4 {
-            let flash_count = (self.energy * 20.0) as usize;
+        if self.energy.energy() > 0.4 {
+            let flash_count = (self.energy.energy() * 20.0) as usize;
             for _ in 0..flash_count {
                 let rx = (self.rand() % w as u32) as u16;
                 let ry = (self.rand() % h as u32) as u16;
@@ -223,11 +213,7 @@ mod tests {
     #[test]
     fn render_paints_cells() {
         let mut matrix = Matrix::new();
-        let fft = FftSnapshot {
-            magnitudes: vec![100.0; 64],
-            sample_rate: 48_000,
-            fft_size: 128,
-        };
+        let fft = FftSnapshot::new(vec![100.0; 64], 48_000, 128);
         let mut grid = CellGrid::new(60, 20);
         {
             let mut ctx = TuiContext { grid: &mut grid };
@@ -245,16 +231,12 @@ mod tests {
     #[test]
     fn energy_smoothing_responds_to_loud_input() {
         let mut matrix = Matrix::new();
-        assert_eq!(matrix.energy, 0.0);
-        let loud = FftSnapshot {
-            magnitudes: vec![5000.0; 64],
-            sample_rate: 48_000,
-            fft_size: 128,
-        };
+        assert_eq!(matrix.energy.energy(), 0.0);
+        let loud = FftSnapshot::new(vec![5000.0; 64], 48_000, 128);
         for _ in 0..20 {
-            matrix.update_energy(&loud);
+            matrix.energy.update(&loud);
         }
-        assert!(matrix.energy > 0.5);
+        assert!(matrix.energy.energy() > 0.5);
     }
 
     #[test]
@@ -290,15 +272,11 @@ mod tests {
     fn beat_flashes_appear_at_high_energy() {
         let mut matrix = Matrix::new();
         // Pump energy high.
-        let loud = FftSnapshot {
-            magnitudes: vec![8000.0; 64],
-            sample_rate: 48_000,
-            fft_size: 128,
-        };
+        let loud = FftSnapshot::new(vec![8000.0; 64], 48_000, 128);
         for _ in 0..30 {
-            matrix.update_energy(&loud);
+            matrix.energy.update(&loud);
         }
-        assert!(matrix.energy > 0.4);
+        assert!(matrix.energy.energy() > 0.4);
 
         let mut grid = CellGrid::new(80, 24);
         {

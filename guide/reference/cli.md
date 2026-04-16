@@ -93,6 +93,25 @@ Runs the Spotify OAuth flow and caches credentials. See
 | `tunnel` | Fly-through tunnel warped by mid-range frequencies |
 | `metaballs` | Floating blobs that merge and split with the music |
 | `starfield` | Depth-sorted stars accelerated by audio intensity |
+| `fire` | Cellular automaton fire with audio-driven roar |
+| `matrix` | Falling code rain with beat-synced glitch bursts |
+| `moire` | Overlapping interference patterns pulsing with bass |
+| `vortex` | Spiral tunnel warped by frequency bands |
+| `wave` | Braille oscilloscope tracing the raw audio waveform |
+| `scope` | Braille Lissajous XY plot with drifting phase offset |
+| `heartbeat` | Braille ECG-style scrolling pulse trace |
+| `classicpeak` | Winamp-style spectrum bars with falling peak caps |
+| `barsdot` | Braille-stippled spectrum bars |
+| `barsoutline` | Box-drawing outline tracing the spectrum top edge |
+| `binary` | Streaming binary digits scrolling with audio energy |
+| `scatter` | Braille particle field twinkling with audio density |
+| `terrain` | Braille scrolling mountain range shaped by spectrum |
+| `butterfly` | Braille mirrored Rorschach inkblot from frequency bands |
+| `pulse` | Braille pulsating circle with shockwave rings on beats |
+| `rain` | Box-drawing falling rain streaks driven by frequency bands |
+| `sakura` | Braille cherry blossom petals drifting with audio energy |
+| `firework` | Braille particle explosions with rising trails and bursts |
+| `retro` | Braille synthwave scene with sun, wave, and perspective grid |
 
 ## Exit codes
 

@@ -15,6 +15,7 @@ use std::time::Instant;
 use crate::audio::FftSnapshot;
 use crate::visualiser::cell_grid::{Cell, CellGrid};
 use crate::visualiser::density_ramp::DensityRamp;
+use crate::visualiser::energy::EnergyTracker;
 use crate::visualiser::palette::{f32_to_u8, hsv_to_rgb, lerp};
 use crate::visualiser::{Rgb, SurfaceKind, TuiContext, Visualiser, VisualiserId};
 
@@ -45,7 +46,7 @@ pub struct Ripples {
     next_ambient: f32,
     rng_state: u32,
     ramp: DensityRamp,
-    energy: f32,
+    energy: EnergyTracker,
     energy_cooldown: f32,
 }
 
@@ -57,7 +58,7 @@ impl Ripples {
             next_ambient: 0.0,
             rng_state: 0xDEAD_BEEF,
             ramp: DensityRamp::new(" .·∙•○◎◉●◐◑◒◓◔◕"),
-            energy: 0.0,
+            energy: EnergyTracker::new(0.5, 0.88, 600.0),
             energy_cooldown: 0.0,
         }
     }
@@ -87,16 +88,6 @@ impl Ripples {
             hue,
         });
     }
-
-    fn update_energy(&mut self, fft: &FftSnapshot) {
-        let sum: f32 = fft.magnitudes.iter().sum();
-        let norm = (sum / fft.magnitudes.len().max(1) as f32 / 600.0).min(1.0);
-        if norm > self.energy {
-            self.energy = 0.5 * self.energy + 0.5 * norm;
-        } else {
-            self.energy = 0.88 * self.energy + 0.12 * norm;
-        }
-    }
 }
 
 impl Default for Ripples {
@@ -115,7 +106,7 @@ impl Visualiser for Ripples {
     }
 
     fn render_tui(&mut self, ctx: &mut TuiContext<'_>, fft: &FftSnapshot) {
-        self.update_energy(fft);
+        self.energy.update(fft);
         let t = self.start.elapsed().as_secs_f32();
 
         let grid: &mut CellGrid = &mut *ctx.grid;
@@ -137,8 +128,8 @@ impl Visualiser for Ripples {
         // Audio-driven drops: a loud beat splats a big, bright drop. The
         // cooldown keeps a sustained tone from spamming new sources.
         self.energy_cooldown = (self.energy_cooldown - 0.033).max(0.0);
-        if self.energy > 0.35 && self.energy_cooldown <= 0.0 {
-            self.spawn_drop(t, w_f, h_f, 0.9 + self.energy * 0.8);
+        if self.energy.energy() > 0.35 && self.energy_cooldown <= 0.0 {
+            self.spawn_drop(t, w_f, h_f, 0.9 + self.energy.energy() * 0.8);
             self.energy_cooldown = 0.15;
         }
 
@@ -212,11 +203,7 @@ mod tests {
     #[test]
     fn render_paints_whole_grid() {
         let mut r = Ripples::new();
-        let fft = FftSnapshot {
-            magnitudes: vec![100.0; 64],
-            sample_rate: 48_000,
-            fft_size: 128,
-        };
+        let fft = FftSnapshot::new(vec![100.0; 64], 48_000, 128);
         let mut grid = CellGrid::new(32, 10);
         {
             let mut ctx = TuiContext { grid: &mut grid };
@@ -233,11 +220,7 @@ mod tests {
     #[test]
     fn loud_audio_spawns_drops() {
         let mut r = Ripples::new();
-        let loud = FftSnapshot {
-            magnitudes: vec![5000.0; 64],
-            sample_rate: 48_000,
-            fft_size: 128,
-        };
+        let loud = FftSnapshot::new(vec![5000.0; 64], 48_000, 128);
         let mut grid = CellGrid::new(32, 10);
         for _ in 0..10 {
             let mut ctx = TuiContext { grid: &mut grid };

@@ -22,8 +22,9 @@ use clitunes_engine::tui::theme::Theme;
 
 use crate::client::transition_controller::TransitionController;
 use clitunes_engine::visualiser::{
-    AnsiWriter, CellGrid, Fire, Matrix, Metaballs, Moire, Plasma, Ripples, TuiContext, Tunnel,
-    Visualiser, Vortex,
+    AnsiWriter, BarsDot, BarsOutline, Binary, Butterfly, CellGrid, ClassicPeak, Fire, Firework,
+    Heartbeat, Matrix, Metaballs, Moire, Plasma, Pulse, Rain, Retro, Ripples, Sakura, Scatter,
+    Scope, Terrain, TuiContext, Tunnel, Visualiser, Vortex, Wave,
 };
 
 /// FFT window size. 2048 samples at 48 kHz gives ~43 ms windows and
@@ -103,6 +104,21 @@ impl AppState {
             Box::new(Fire::new()),
             Box::new(Matrix::new()),
             Box::new(Moire::new()),
+            Box::new(Wave::new()),
+            Box::new(Scope::new()),
+            Box::new(Heartbeat::new()),
+            Box::new(ClassicPeak::new()),
+            Box::new(BarsDot::new()),
+            Box::new(BarsOutline::new()),
+            Box::new(Binary::new()),
+            Box::new(Scatter::new()),
+            Box::new(Terrain::new()),
+            Box::new(Butterfly::new()),
+            Box::new(Pulse::new()),
+            Box::new(Rain::new()),
+            Box::new(Sakura::new()),
+            Box::new(Firework::new()),
+            Box::new(Retro::new()),
         ];
         let active_idx = 0; // Plasma — the strongest first impression.
 
@@ -224,11 +240,11 @@ impl AppState {
                 tracing::info!(target: "clitunes", %reason, "daemon shutting down");
                 stop.store(true, Ordering::SeqCst);
             }
-            Event::SearchResults { query, items, .. } => {
-                // Ignore stale results — user has moved on.
-                if *query == self.picker_state.search_query {
-                    self.picker_state.set_search_results(items.clone());
-                }
+            // Ignore stale results — user has moved on.
+            Event::SearchResults { query, items, .. }
+                if *query == self.picker_state.search_query =>
+            {
+                self.picker_state.set_search_results(items.clone());
             }
             Event::LibraryResults {
                 category, items, ..

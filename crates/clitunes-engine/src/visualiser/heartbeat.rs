@@ -1,0 +1,222 @@
+//! Heartbeat — braille ECG-style scrolling trace. A history buffer stores
+//! Y values across the sub-pixel width; each frame the history shifts left
+//! and a new value derived from the current samples is pushed on the right.
+//! The sample transform `sample * sample.abs()` produces the sharp spikes
+//! characteristic of an ECG trace. A dashed baseline runs through the
+//! centre. Green-on-black hospital monitor aesthetic.
+
+use crate::audio::FftSnapshot;
+use crate::visualiser::braille::BrailleBuffer;
+use crate::visualiser::cell_grid::CellGrid;
+use crate::visualiser::energy::EnergyTracker;
+use crate::visualiser::palette::f32_to_u8;
+use crate::visualiser::{Rgb, SurfaceKind, TuiContext, Visualiser, VisualiserId};
+
+pub struct Heartbeat {
+    braille: BrailleBuffer,
+    energy: EnergyTracker,
+    history: Vec<f32>,
+    last_w: u16,
+    last_h: u16,
+}
+
+impl Heartbeat {
+    pub fn new() -> Self {
+        Self {
+            braille: BrailleBuffer::new(1, 1),
+            energy: EnergyTracker::new(0.5, 0.88, 500.0),
+            history: Vec::new(),
+            last_w: 0,
+            last_h: 0,
+        }
+    }
+
+    fn ensure_buf(&mut self, w: u16, h: u16) {
+        if self.last_w != w || self.last_h != h {
+            self.braille.resize(w, h);
+            self.last_w = w;
+            self.last_h = h;
+            // Reset history to match new sub-pixel width.
+            let sub_w = self.braille.width() as usize;
+            self.history.clear();
+            self.history.resize(sub_w, 0.0);
+        }
+    }
+}
+
+impl Default for Heartbeat {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Visualiser for Heartbeat {
+    fn id(&self) -> VisualiserId {
+        VisualiserId::Heartbeat
+    }
+
+    fn surface(&self) -> SurfaceKind {
+        SurfaceKind::Tui
+    }
+
+    fn render_tui(&mut self, ctx: &mut TuiContext<'_>, fft: &FftSnapshot) {
+        let energy = self.energy.update(fft);
+
+        let grid: &mut CellGrid = ctx.grid;
+        let w = grid.width();
+        let h = grid.height();
+        if w == 0 || h == 0 {
+            return;
+        }
+
+        self.ensure_buf(w, h);
+        self.braille.clear();
+
+        let sub_w = self.braille.width() as usize;
+        let sub_h = self.braille.height() as i32;
+        let center_y = sub_h / 2;
+
+        // Compute new value from samples: average transformed by sample * |sample|
+        // for ECG-like spikes. Modulate amplitude by energy.
+        let new_val = if fft.samples.is_empty() {
+            0.0
+        } else {
+            let sum: f32 = fft.samples.iter().map(|&s| s * s.abs()).sum();
+            let avg = sum / fft.samples.len() as f32;
+            // Scale up for visibility and modulate by energy.
+            let amplitude_mod = 0.5 + energy * 2.0;
+            (avg * amplitude_mod).clamp(-1.0, 1.0)
+        };
+
+        // Scroll history left, push new value.
+        let len = self.history.len();
+        if len > 1 {
+            self.history.copy_within(1.., 0);
+            self.history[len - 1] = new_val;
+        } else if len == 1 {
+            self.history[0] = new_val;
+        }
+
+        // Draw the trace using line() between consecutive points.
+        let half_h = (sub_h / 2) as f32;
+        let mut prev: Option<(i32, i32)> = None;
+        for (x, &val) in self.history.iter().enumerate() {
+            let y = center_y - (val * half_h).round() as i32;
+            let y = y.clamp(0, sub_h - 1);
+
+            if let Some((px, py)) = prev {
+                self.braille.line(px, py, x as i32, y);
+            }
+            prev = Some((x as i32, y));
+        }
+
+        // Draw dashed baseline at center: every other x, set dot at center_y.
+        for x in (0..sub_w).step_by(2) {
+            self.braille
+                .set(x as u16, center_y.clamp(0, sub_h - 1) as u16, true);
+        }
+
+        // Compose into grid with green-on-black hospital monitor colour.
+        let base = 0.3_f32;
+        let brightness = (base + energy * 0.7).min(1.0);
+
+        self.braille.compose(grid, |_cx, _cy, dot_count| {
+            if dot_count > 0 {
+                let peak_boost = (dot_count as f32 / 8.0).min(1.0);
+                let green_val = brightness * (0.5 + 0.5 * peak_boost);
+                let fg = Rgb::new(0, f32_to_u8(green_val), 0);
+                (fg, Rgb::BLACK)
+            } else {
+                (Rgb::BLACK, Rgb::BLACK)
+            }
+        });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn fft_with_samples(samples: Vec<f32>) -> FftSnapshot {
+        let len = samples.len();
+        FftSnapshot {
+            magnitudes: vec![100.0; len / 2],
+            sample_rate: 48_000,
+            fft_size: len,
+            samples,
+        }
+    }
+
+    #[test]
+    fn render_with_nonzero_fft_produces_braille() {
+        let mut hb = Heartbeat::new();
+        let samples: Vec<f32> = (0..1024).map(|i| (i as f32 * 0.05).sin() * 0.7).collect();
+        let fft = fft_with_samples(samples);
+        let mut grid = CellGrid::new(40, 12);
+        {
+            let mut ctx = TuiContext { grid: &mut grid };
+            hb.render_tui(&mut ctx, &fft);
+        }
+        let braille_count = grid
+            .cells()
+            .iter()
+            .filter(|c| c.ch != '\u{2800}' && c.ch != ' ')
+            .count();
+        assert!(
+            braille_count > 0,
+            "should have non-empty braille cells, got {braille_count}"
+        );
+    }
+
+    #[test]
+    fn output_changes_between_frames() {
+        let mut hb = Heartbeat::new();
+
+        // Feed several frames of silence to fill the history with zeros.
+        let silent = fft_with_samples(vec![0.0; 1024]);
+        let mut grid = CellGrid::new(30, 10);
+        for _ in 0..10 {
+            let mut ctx = TuiContext { grid: &mut grid };
+            hb.render_tui(&mut ctx, &silent);
+        }
+        let mut grid_a = CellGrid::new(30, 10);
+        {
+            let mut ctx = TuiContext { grid: &mut grid_a };
+            hb.render_tui(&mut ctx, &silent);
+        }
+
+        // Now feed loud, asymmetric samples to push non-zero values
+        // into the history. The ECG transform (s * |s|) preserves sign,
+        // so a positive-biased signal will produce different trace than zeros.
+        let loud: Vec<f32> = (0..1024).map(|_| 0.8).collect();
+        let fft_loud = fft_with_samples(loud);
+        for _ in 0..10 {
+            let mut ctx = TuiContext { grid: &mut grid };
+            hb.render_tui(&mut ctx, &fft_loud);
+        }
+        let mut grid_b = CellGrid::new(30, 10);
+        {
+            let mut ctx = TuiContext { grid: &mut grid_b };
+            hb.render_tui(&mut ctx, &fft_loud);
+        }
+
+        let diff = grid_a
+            .cells()
+            .iter()
+            .zip(grid_b.cells().iter())
+            .filter(|(a, b)| a.ch != b.ch)
+            .count();
+        assert!(diff > 0, "different inputs should produce different output");
+    }
+
+    #[test]
+    fn resize_does_not_panic() {
+        let mut hb = Heartbeat::new();
+        let fft = fft_with_samples(vec![0.3; 256]);
+        for (w, h) in [(10, 5), (80, 24), (1, 1), (200, 50)] {
+            let mut grid = CellGrid::new(w, h);
+            let mut ctx = TuiContext { grid: &mut grid };
+            hb.render_tui(&mut ctx, &fft);
+        }
+    }
+}

@@ -21,6 +21,7 @@ use std::time::Instant;
 use crate::audio::FftSnapshot;
 use crate::visualiser::cell_grid::{Cell, CellGrid};
 use crate::visualiser::density_ramp::DensityRamp;
+use crate::visualiser::energy::EnergyTracker;
 use crate::visualiser::palette::{f32_to_u8, hsv_to_rgb, lerp};
 use crate::visualiser::{Rgb, SurfaceKind, TuiContext, Visualiser, VisualiserId};
 
@@ -39,7 +40,7 @@ pub struct Fire {
     start: Instant,
     ramp: DensityRamp,
     /// Smoothed audio energy used to modulate fire intensity.
-    energy: f32,
+    energy: EnergyTracker,
     /// Heat buffer, row-major, same dimensions as grid.
     heat: Vec<f32>,
     /// Last known grid width (to detect resize).
@@ -53,21 +54,10 @@ impl Fire {
         Self {
             start: Instant::now(),
             ramp: DensityRamp::new(" .·:;+=xX#%@"),
-            energy: 0.0,
+            energy: EnergyTracker::new(0.5, 0.88, 500.0),
             heat: Vec::new(),
             last_w: 0,
             last_h: 0,
-        }
-    }
-
-    fn update_energy(&mut self, fft: &FftSnapshot) {
-        let sum: f32 = fft.magnitudes.iter().sum();
-        let norm = (sum / fft.magnitudes.len().max(1) as f32 / 500.0).min(1.0);
-        // Attack-release smoothing.
-        if norm > self.energy {
-            self.energy = 0.5 * self.energy + 0.5 * norm;
-        } else {
-            self.energy = 0.88 * self.energy + 0.12 * norm;
         }
     }
 
@@ -113,7 +103,7 @@ impl Visualiser for Fire {
     }
 
     fn render_tui(&mut self, ctx: &mut TuiContext<'_>, fft: &FftSnapshot) {
-        self.update_energy(fft);
+        self.energy.update(fft);
 
         let grid: &mut CellGrid = &mut *ctx.grid;
         let w = grid.width();
@@ -137,7 +127,7 @@ impl Visualiser for Fire {
 
         // --- Step 1: Inject heat at the bottom row ---
         let bottom = h_us - 1;
-        let base = BASE_HEAT + ENERGY_HEAT_BOOST * self.energy;
+        let base = BASE_HEAT + ENERGY_HEAT_BOOST * self.energy.energy();
         for x in 0..w_us {
             let noise = Self::hash_noise(x as u32, bottom as u32, frame);
             // Vary injection across the bottom to create natural flicker.
@@ -167,7 +157,7 @@ impl Visualiser for Fire {
                 let avg = (bl + bc + br) / 3.0;
 
                 // --- Step 3: Procedural turbulence ---
-                let turb_amp = TURBULENCE_BASE + TURBULENCE_ENERGY * self.energy;
+                let turb_amp = TURBULENCE_BASE + TURBULENCE_ENERGY * self.energy.energy();
                 let noise = Self::hash_noise(x as u32, y as u32, frame);
                 // Centre noise around 0 so it flickers both ways.
                 let turb = (noise - 0.5) * turb_amp;
@@ -224,11 +214,7 @@ mod tests {
     #[test]
     fn render_paints_whole_grid() {
         let mut fire = Fire::new();
-        let fft = FftSnapshot {
-            magnitudes: vec![100.0; 128],
-            sample_rate: 48_000,
-            fft_size: 256,
-        };
+        let fft = FftSnapshot::new(vec![100.0; 128], 48_000, 256);
         let mut grid = CellGrid::new(40, 12);
         // Run a few frames so heat propagates upward.
         for _ in 0..10 {
@@ -247,16 +233,12 @@ mod tests {
     #[test]
     fn energy_smoothing_responds_to_input() {
         let mut fire = Fire::new();
-        assert_eq!(fire.energy, 0.0);
-        let loud = FftSnapshot {
-            magnitudes: vec![5000.0; 64],
-            sample_rate: 48_000,
-            fft_size: 128,
-        };
+        assert_eq!(fire.energy.energy(), 0.0);
+        let loud = FftSnapshot::new(vec![5000.0; 64], 48_000, 128);
         for _ in 0..20 {
-            fire.update_energy(&loud);
+            fire.energy.update(&loud);
         }
-        assert!(fire.energy > 0.5);
+        assert!(fire.energy.energy() > 0.5);
     }
 
     #[test]

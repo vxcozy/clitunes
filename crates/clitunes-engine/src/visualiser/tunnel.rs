@@ -14,6 +14,7 @@ use std::time::Instant;
 use crate::audio::FftSnapshot;
 use crate::visualiser::cell_grid::{Cell, CellGrid};
 use crate::visualiser::density_ramp::DensityRamp;
+use crate::visualiser::energy::EnergyTracker;
 use crate::visualiser::palette::{f32_to_u8, hsv_to_rgb, lerp};
 use crate::visualiser::{Rgb, SurfaceKind, TuiContext, Visualiser, VisualiserId};
 
@@ -22,7 +23,7 @@ const DEPTH_SCALE: f32 = 32.0;
 pub struct Tunnel {
     start: Instant,
     ramp: DensityRamp,
-    energy: f32,
+    energy: EnergyTracker,
 }
 
 impl Tunnel {
@@ -30,17 +31,7 @@ impl Tunnel {
         Self {
             start: Instant::now(),
             ramp: DensityRamp::new(" .:-=+*#%@█"),
-            energy: 0.0,
-        }
-    }
-
-    fn update_energy(&mut self, fft: &FftSnapshot) {
-        let sum: f32 = fft.magnitudes.iter().sum();
-        let norm = (sum / fft.magnitudes.len().max(1) as f32 / 500.0).min(1.0);
-        if norm > self.energy {
-            self.energy = 0.55 * self.energy + 0.45 * norm;
-        } else {
-            self.energy = 0.9 * self.energy + 0.1 * norm;
+            energy: EnergyTracker::new(0.55, 0.9, 500.0),
         }
     }
 }
@@ -61,7 +52,7 @@ impl Visualiser for Tunnel {
     }
 
     fn render_tui(&mut self, ctx: &mut TuiContext<'_>, fft: &FftSnapshot) {
-        self.update_energy(fft);
+        self.energy.update(fft);
 
         let grid: &mut CellGrid = &mut *ctx.grid;
         let w = grid.width();
@@ -79,8 +70,8 @@ impl Visualiser for Tunnel {
         let half_diag = (cx * cx + cy * cy).sqrt().max(1.0);
 
         let t = self.start.elapsed().as_secs_f32();
-        let forward = t * (0.6 + 1.0 * self.energy);
-        let spin = t * (0.12 + 0.4 * self.energy);
+        let forward = t * (0.6 + 1.0 * self.energy.energy());
+        let spin = t * (0.12 + 0.4 * self.energy.energy());
 
         for y in 0..h {
             let yf = y as f32 * ASPECT - cy;
@@ -134,11 +125,7 @@ mod tests {
     #[test]
     fn render_paints_whole_grid() {
         let mut t = Tunnel::new();
-        let fft = FftSnapshot {
-            magnitudes: vec![200.0; 64],
-            sample_rate: 48_000,
-            fft_size: 128,
-        };
+        let fft = FftSnapshot::new(vec![200.0; 64], 48_000, 128);
         let mut grid = CellGrid::new(40, 12);
         {
             let mut ctx = TuiContext { grid: &mut grid };

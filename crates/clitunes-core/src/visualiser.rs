@@ -21,6 +21,10 @@ pub enum VisualiserId {
     Wave,
     Scope,
     Heartbeat,
+    ClassicPeak,
+    BarsDot,
+    BarsOutline,
+    Binary,
 }
 
 impl VisualiserId {
@@ -41,6 +45,10 @@ impl VisualiserId {
             Self::Wave => "wave",
             Self::Scope => "scope",
             Self::Heartbeat => "heartbeat",
+            Self::ClassicPeak => "classicpeak",
+            Self::BarsDot => "barsdot",
+            Self::BarsOutline => "barsoutline",
+            Self::Binary => "binary",
         }
     }
 
@@ -61,6 +69,10 @@ impl VisualiserId {
             "wave" => Some(Self::Wave),
             "scope" => Some(Self::Scope),
             "heartbeat" => Some(Self::Heartbeat),
+            "classicpeak" => Some(Self::ClassicPeak),
+            "barsdot" => Some(Self::BarsDot),
+            "barsoutline" => Some(Self::BarsOutline),
+            "binary" => Some(Self::Binary),
             _ => None,
         }
     }

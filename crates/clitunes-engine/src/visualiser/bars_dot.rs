@@ -1,0 +1,234 @@
+//! BarsDot — braille-stippled spectrum bar visualiser.
+
+use crate::audio::FftSnapshot;
+use crate::visualiser::braille::BrailleBuffer;
+use crate::visualiser::cell_grid::CellGrid;
+use crate::visualiser::energy::EnergyTracker;
+use crate::visualiser::palette::f32_to_u8;
+use crate::visualiser::{Rgb, SurfaceKind, TuiContext, Visualiser, VisualiserId};
+
+pub struct BarsDot {
+    energy: EnergyTracker,
+    braille: BrailleBuffer,
+    bar_heights: Vec<f32>,
+    last_band_count: usize,
+    last_w: u16,
+    last_h: u16,
+    frame: u32,
+}
+
+impl BarsDot {
+    pub fn new() -> Self {
+        Self {
+            energy: EnergyTracker::new(0.5, 0.88, 500.0),
+            braille: BrailleBuffer::new(1, 1),
+            bar_heights: Vec::new(),
+            last_band_count: 0,
+            last_w: 0,
+            last_h: 0,
+            frame: 0,
+        }
+    }
+
+    fn ensure_buf(&mut self, w: u16, h: u16) {
+        if self.last_w != w || self.last_h != h {
+            self.braille.resize(w, h);
+            self.last_w = w;
+            self.last_h = h;
+        }
+    }
+
+    fn bands_from_fft(&self, fft: &FftSnapshot, num_bands: usize) -> Vec<f32> {
+        let bin_count = fft.magnitudes.len().max(1);
+        let max_log = ((bin_count - 1).max(1) as f32).ln().max(1.0);
+        let mut out = vec![0.0_f32; num_bands];
+        for (band, slot) in out.iter_mut().enumerate() {
+            let lo_log = (band as f32 / num_bands as f32) * max_log;
+            let hi_log = ((band + 1) as f32 / num_bands as f32) * max_log;
+            let lo = (lo_log.exp().round() as usize).min(bin_count - 1);
+            let hi = (hi_log.exp().round() as usize).clamp(lo + 1, bin_count);
+            let slice = &fft.magnitudes[lo..hi];
+            let max_mag = slice.iter().cloned().fold(0.0_f32, f32::max);
+            *slot = (1.0 + max_mag / 1000.0).ln().min(1.0);
+        }
+        out
+    }
+
+    fn smooth_bars(&mut self, raw: &[f32]) {
+        if self.bar_heights.len() != raw.len() {
+            self.bar_heights.resize(raw.len(), 0.0);
+            self.last_band_count = raw.len();
+        }
+        for (i, &r) in raw.iter().enumerate() {
+            let prev = self.bar_heights[i];
+            if r > prev {
+                self.bar_heights[i] = 0.5 * prev + 0.5 * r; // attack
+            } else {
+                self.bar_heights[i] = 0.8 * prev + 0.2 * r; // release
+            }
+        }
+    }
+
+    /// 3-tier gradient: bottom green, mid yellow, top red.
+    fn color_for_row(cy: u16, h: u16) -> Rgb {
+        if h == 0 {
+            return Rgb::BLACK;
+        }
+        // t=0 at top of grid, t=1 at bottom.
+        let t = cy as f32 / (h - 1).max(1) as f32;
+        // Invert: bar grows from bottom, so bottom rows (high t) are green,
+        // top rows (low t) are red.
+        let inv = 1.0 - t;
+        if inv < 0.5 {
+            // Bottom half: green to yellow.
+            let local = inv / 0.5;
+            let r = f32_to_u8(local);
+            let g = 255;
+            Rgb::new(r, g, 0)
+        } else {
+            // Top half: yellow to red.
+            let local = (inv - 0.5) / 0.5;
+            let r = 255;
+            let g = f32_to_u8(1.0 - local);
+            Rgb::new(r, g, 0)
+        }
+    }
+}
+
+impl Default for BarsDot {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Visualiser for BarsDot {
+    fn id(&self) -> VisualiserId {
+        VisualiserId::BarsDot
+    }
+
+    fn surface(&self) -> SurfaceKind {
+        SurfaceKind::Tui
+    }
+
+    fn render_tui(&mut self, ctx: &mut TuiContext<'_>, fft: &FftSnapshot) {
+        let _energy = self.energy.update(fft);
+        self.frame = self.frame.wrapping_add(1);
+
+        let grid: &mut CellGrid = ctx.grid;
+        let w = grid.width();
+        let h = grid.height();
+        if w == 0 || h == 0 {
+            return;
+        }
+
+        self.ensure_buf(w, h);
+        self.braille.clear();
+
+        let num_bands = 64.min(w as usize);
+        if num_bands == 0 {
+            return;
+        }
+
+        let raw = self.bands_from_fft(fft, num_bands);
+        self.smooth_bars(&raw);
+
+        let bw = self.braille.width() as usize;
+        let bh = self.braille.height() as usize;
+
+        for (band, &height) in self.bar_heights.iter().enumerate() {
+            let col_start = band * bw / num_bands;
+            let col_end = (band + 1) * bw / num_bands;
+            let fill_h = (height * bh as f32).round() as usize;
+            if fill_h == 0 || col_start >= col_end {
+                continue;
+            }
+            for x in col_start..col_end {
+                for dy in 0..fill_h {
+                    let y = bh - 1 - dy;
+                    self.braille.set(x as u16, y as u16, true);
+                }
+            }
+        }
+
+        let grid_h = h;
+        self.braille.compose(grid, |_cx, cy, dot_count| {
+            if dot_count > 0 {
+                let fg = Self::color_for_row(cy, grid_h);
+                (fg, Rgb::BLACK)
+            } else {
+                (Rgb::BLACK, Rgb::BLACK)
+            }
+        });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn loud_fft() -> FftSnapshot {
+        FftSnapshot::new(vec![5000.0; 128], 48_000, 256)
+    }
+
+    #[test]
+    fn render_paints_cells() {
+        let mut viz = BarsDot::new();
+        let fft = loud_fft();
+        let mut grid = CellGrid::new(80, 24);
+        {
+            let mut ctx = TuiContext { grid: &mut grid };
+            viz.render_tui(&mut ctx, &fft);
+        }
+        let non_blank = grid
+            .cells()
+            .iter()
+            .filter(|c| c.ch != '\u{2800}' && c.ch != ' ')
+            .count();
+        assert!(
+            non_blank > 0,
+            "loud FFT should produce non-blank braille cells, got {non_blank}"
+        );
+    }
+
+    #[test]
+    fn output_changes_between_frames() {
+        let mut viz = BarsDot::new();
+        let fft = loud_fft();
+
+        let mut grid_a = CellGrid::new(40, 12);
+        {
+            let mut ctx = TuiContext { grid: &mut grid_a };
+            viz.render_tui(&mut ctx, &fft);
+        }
+
+        // Feed a different FFT so smoothing changes output.
+        let fft_b = FftSnapshot::new(vec![100.0; 128], 48_000, 256);
+        let mut grid_b = CellGrid::new(40, 12);
+        {
+            let mut ctx = TuiContext { grid: &mut grid_b };
+            viz.render_tui(&mut ctx, &fft_b);
+        }
+
+        let diff = grid_a
+            .cells()
+            .iter()
+            .zip(grid_b.cells().iter())
+            .filter(|(a, b)| a.ch != b.ch || a.fg != b.fg)
+            .count();
+        assert!(
+            diff > 0,
+            "consecutive frames with different input should differ"
+        );
+    }
+
+    #[test]
+    fn resize_no_panic() {
+        let mut viz = BarsDot::new();
+        let fft = loud_fft();
+        for (w, h) in [(80, 24), (40, 12), (1, 1), (200, 50)] {
+            let mut grid = CellGrid::new(w, h);
+            let mut ctx = TuiContext { grid: &mut grid };
+            viz.render_tui(&mut ctx, &fft);
+        }
+    }
+}

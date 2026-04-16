@@ -100,6 +100,10 @@ Runs the Spotify OAuth flow and caches credentials. See
 | `wave` | Braille oscilloscope tracing the raw audio waveform |
 | `scope` | Braille Lissajous XY plot with drifting phase offset |
 | `heartbeat` | Braille ECG-style scrolling pulse trace |
+| `classicpeak` | Winamp-style spectrum bars with falling peak caps |
+| `barsdot` | Braille-stippled spectrum bars |
+| `barsoutline` | Box-drawing outline tracing the spectrum top edge |
+| `binary` | Streaming binary digits scrolling with audio energy |
 
 ## Exit codes
 

@@ -62,7 +62,6 @@ impl Matrix {
         h ^= h >> 16;
         h
     }
-
 }
 
 impl Default for Matrix {

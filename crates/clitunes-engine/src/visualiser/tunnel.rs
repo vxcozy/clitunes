@@ -34,7 +34,6 @@ impl Tunnel {
             energy: EnergyTracker::new(0.55, 0.9, 500.0),
         }
     }
-
 }
 
 impl Default for Tunnel {

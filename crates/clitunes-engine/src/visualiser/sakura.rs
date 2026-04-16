@@ -78,10 +78,8 @@ impl Sakura {
         }
         braille.set(px as u16, py as u16, true);
         match size {
-            1 => {
-                if px + 1 < bw {
-                    braille.set((px + 1) as u16, py as u16, true);
-                }
+            1 if px + 1 < bw => {
+                braille.set((px + 1) as u16, py as u16, true);
             }
             2 => {
                 if px + 1 < bw {

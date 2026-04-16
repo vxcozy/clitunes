@@ -164,7 +164,10 @@ mod tests {
             .iter()
             .zip(snap2.cells().iter())
             .any(|(a, b)| a.ch != b.ch);
-        assert!(differs, "two consecutive frames should differ due to scroll");
+        assert!(
+            differs,
+            "two consecutive frames should differ due to scroll"
+        );
     }
 
     #[test]

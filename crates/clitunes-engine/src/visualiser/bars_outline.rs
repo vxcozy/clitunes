@@ -81,7 +81,11 @@ impl Visualiser for BarsOutline {
         self.bins_from_fft(fft, w as usize);
 
         let bg = Rgb::new(2, 2, 6);
-        grid.fill(Cell { ch: ' ', fg: Rgb::BLACK, bg });
+        grid.fill(Cell {
+            ch: ' ',
+            fg: Rgb::BLACK,
+            bg,
+        });
 
         let h_f = (h - 1) as f32;
         let num_bands = w as usize;
@@ -99,10 +103,17 @@ impl Visualiser for BarsOutline {
         let fg_colour = Rgb::new(f32_to_u8(cr), f32_to_u8(cg), f32_to_u8(cb));
 
         // First pass: draw horizontal segments at each column's outline row.
-        for x in 0..num_bands {
-            let row = outline_rows[x];
+        for (x, &row) in outline_rows.iter().enumerate().take(num_bands) {
             if row < h {
-                grid.set(x as u16, row, Cell { ch: '\u{2500}', fg: fg_colour, bg });
+                grid.set(
+                    x as u16,
+                    row,
+                    Cell {
+                        ch: '\u{2500}',
+                        fg: fg_colour,
+                        bg,
+                    },
+                );
             }
         }
 
@@ -120,24 +131,64 @@ impl Visualiser for BarsOutline {
             // endpoints which get corner chars).
             for ry in (top + 1)..bot {
                 if ry < h {
-                    grid.set(x as u16, ry, Cell { ch: '\u{2502}', fg: fg_colour, bg });
+                    grid.set(
+                        x as u16,
+                        ry,
+                        Cell {
+                            ch: '\u{2502}',
+                            fg: fg_colour,
+                            bg,
+                        },
+                    );
                 }
             }
             if r0 < r1 {
                 // Line goes down to the right.
                 if r0 < h {
-                    grid.set(x as u16, r0, Cell { ch: '\u{256E}', fg: fg_colour, bg });
+                    grid.set(
+                        x as u16,
+                        r0,
+                        Cell {
+                            ch: '\u{256E}',
+                            fg: fg_colour,
+                            bg,
+                        },
+                    );
                 }
                 if r1 < h {
-                    grid.set((x + 1) as u16, r1, Cell { ch: '\u{2570}', fg: fg_colour, bg });
+                    grid.set(
+                        (x + 1) as u16,
+                        r1,
+                        Cell {
+                            ch: '\u{2570}',
+                            fg: fg_colour,
+                            bg,
+                        },
+                    );
                 }
             } else {
                 // Line goes up to the right.
                 if r0 < h {
-                    grid.set(x as u16, r0, Cell { ch: '\u{256F}', fg: fg_colour, bg });
+                    grid.set(
+                        x as u16,
+                        r0,
+                        Cell {
+                            ch: '\u{256F}',
+                            fg: fg_colour,
+                            bg,
+                        },
+                    );
                 }
                 if r1 < h {
-                    grid.set((x + 1) as u16, r1, Cell { ch: '\u{256D}', fg: fg_colour, bg });
+                    grid.set(
+                        (x + 1) as u16,
+                        r1,
+                        Cell {
+                            ch: '\u{256D}',
+                            fg: fg_colour,
+                            bg,
+                        },
+                    );
                 }
             }
         }
@@ -166,11 +217,7 @@ mod tests {
             let mut ctx = TuiContext { grid: &mut grid };
             vis.render_tui(&mut ctx, &fft);
         }
-        let non_space = grid
-            .cells()
-            .iter()
-            .filter(|c| c.ch != ' ')
-            .count();
+        let non_space = grid.cells().iter().filter(|c| c.ch != ' ').count();
         assert!(non_space > 0, "loud FFT should produce non-space cells");
     }
 

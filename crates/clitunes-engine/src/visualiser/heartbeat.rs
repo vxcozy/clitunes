@@ -81,11 +81,7 @@ impl Visualiser for Heartbeat {
         let new_val = if fft.samples.is_empty() {
             0.0
         } else {
-            let sum: f32 = fft
-                .samples
-                .iter()
-                .map(|&s| s * s.abs())
-                .sum();
+            let sum: f32 = fft.samples.iter().map(|&s| s * s.abs()).sum();
             let avg = sum / fft.samples.len() as f32;
             // Scale up for visibility and modulate by energy.
             let amplitude_mod = 0.5 + energy * 2.0;
@@ -154,9 +150,7 @@ mod tests {
     #[test]
     fn render_with_nonzero_fft_produces_braille() {
         let mut hb = Heartbeat::new();
-        let samples: Vec<f32> = (0..1024)
-            .map(|i| (i as f32 * 0.05).sin() * 0.7)
-            .collect();
+        let samples: Vec<f32> = (0..1024).map(|i| (i as f32 * 0.05).sin() * 0.7).collect();
         let fft = fft_with_samples(samples);
         let mut grid = CellGrid::new(40, 12);
         {

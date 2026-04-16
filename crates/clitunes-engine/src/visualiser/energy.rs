@@ -53,7 +53,11 @@ mod tests {
         for _ in 0..20 {
             tracker.update(&fft);
         }
-        assert!(tracker.energy() > 0.5, "energy should rise, got {}", tracker.energy());
+        assert!(
+            tracker.energy() > 0.5,
+            "energy should rise, got {}",
+            tracker.energy()
+        );
     }
 
     #[test]
@@ -68,7 +72,11 @@ mod tests {
         for _ in 0..50 {
             tracker.update(&silent);
         }
-        assert!(tracker.energy() < peak * 0.1, "energy should decay, got {}", tracker.energy());
+        assert!(
+            tracker.energy() < peak * 0.1,
+            "energy should decay, got {}",
+            tracker.energy()
+        );
     }
 
     #[test]

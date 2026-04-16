@@ -10,7 +10,11 @@ const GRAVITY: f32 = 0.003;
 const BLOCK_CHARS: [char; 8] = ['▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'];
 const PEAK_CHAR: char = '▔';
 const BG: Rgb = Rgb { r: 4, g: 4, b: 8 };
-const PEAK_COLOR: Rgb = Rgb { r: 255, g: 255, b: 255 };
+const PEAK_COLOR: Rgb = Rgb {
+    r: 255,
+    g: 255,
+    b: 255,
+};
 
 pub struct ClassicPeak {
     energy: EnergyTracker,
@@ -119,7 +123,7 @@ impl Visualiser for ClassicPeak {
         }
 
         // Decide band count and bar layout.
-        let band_count = (w / 2).min(64).max(1);
+        let band_count = (w / 2).clamp(1, 64);
         let cell_per_bar = if band_count * 3 <= w { 3 } else { 2 };
         let bar_width = cell_per_bar - 1;
         let total = band_count * cell_per_bar;
@@ -131,7 +135,11 @@ impl Visualiser for ClassicPeak {
         self.smooth_and_update_peaks(&raw);
 
         // Fill background.
-        grid.fill(Cell { ch: ' ', fg: BG, bg: BG });
+        grid.fill(Cell {
+            ch: ' ',
+            fg: BG,
+            bg: BG,
+        });
 
         let h_f = h as f32;
 
@@ -164,7 +172,15 @@ impl Visualiser for ClassicPeak {
                         // Fully filled cell.
                         let frac = (rows_from_bottom + 0.5) / h_f;
                         let color = bar_color(frac);
-                        grid.set(cx as u16, row as u16, Cell { ch: '█', fg: color, bg: BG });
+                        grid.set(
+                            cx as u16,
+                            row as u16,
+                            Cell {
+                                ch: '█',
+                                fg: color,
+                                bg: BG,
+                            },
+                        );
                     } else if rows_from_bottom < bar_top {
                         // Fractional top cell.
                         let frac_part = bar_top - rows_from_bottom;
@@ -174,14 +190,22 @@ impl Visualiser for ClassicPeak {
                         grid.set(
                             cx as u16,
                             row as u16,
-                            Cell { ch: BLOCK_CHARS[block_idx], fg: color, bg: BG },
+                            Cell {
+                                ch: BLOCK_CHARS[block_idx],
+                                fg: color,
+                                bg: BG,
+                            },
                         );
                     } else if is_peak_row {
                         // Peak indicator.
                         grid.set(
                             cx as u16,
                             row as u16,
-                            Cell { ch: PEAK_CHAR, fg: PEAK_COLOR, bg: BG },
+                            Cell {
+                                ch: PEAK_CHAR,
+                                fg: PEAK_COLOR,
+                                bg: BG,
+                            },
                         );
                     }
                     // else: already filled with background
@@ -220,7 +244,10 @@ mod tests {
             .iter()
             .filter(|c| c.ch != ' ' && (c.fg != BG || c.bg != BG))
             .count();
-        assert!(interesting > 0, "loud FFT should paint non-background cells, got {interesting}");
+        assert!(
+            interesting > 0,
+            "loud FFT should paint non-background cells, got {interesting}"
+        );
     }
 
     #[test]

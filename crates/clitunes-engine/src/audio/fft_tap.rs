@@ -187,7 +187,10 @@ mod tests {
         let snap = tap.snapshot_from(&frames, sr as u32);
         assert_eq!(snap.samples.len(), 1024);
         let peak = snap.samples.iter().copied().fold(0.0_f32, f32::max);
-        assert!(peak > 0.1, "sine input should produce non-trivial samples, peak={peak}");
+        assert!(
+            peak > 0.1,
+            "sine input should produce non-trivial samples, peak={peak}"
+        );
     }
 
     #[test]
@@ -196,7 +199,10 @@ mod tests {
         let frames = vec![StereoFrame::SILENCE; 1024];
         let snap = tap.snapshot_from(&frames, PcmFormat::STUDIO.sample_rate);
         let max_abs: f32 = snap.samples.iter().map(|s| s.abs()).fold(0.0, f32::max);
-        assert!(max_abs < 1e-6, "silence should give near-zero samples, got {max_abs}");
+        assert!(
+            max_abs < 1e-6,
+            "silence should give near-zero samples, got {max_abs}"
+        );
     }
 
     #[test]

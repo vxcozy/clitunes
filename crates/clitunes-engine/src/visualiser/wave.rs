@@ -66,7 +66,8 @@ impl Visualiser for Wave {
         let samples = &fft.samples;
         if samples.is_empty() {
             // Nothing to draw — compose blank braille and return.
-            self.braille.compose(grid, |_, _, _| (Rgb::BLACK, Rgb::BLACK));
+            self.braille
+                .compose(grid, |_, _, _| (Rgb::BLACK, Rgb::BLACK));
             return;
         }
 
@@ -127,9 +128,7 @@ mod tests {
     #[test]
     fn render_with_nonzero_fft_produces_braille() {
         let mut wave = Wave::new();
-        let samples: Vec<f32> = (0..1024)
-            .map(|i| (i as f32 * 0.05).sin() * 0.5)
-            .collect();
+        let samples: Vec<f32> = (0..1024).map(|i| (i as f32 * 0.05).sin() * 0.5).collect();
         let fft = fft_with_samples(samples);
         let mut grid = CellGrid::new(40, 12);
         {
@@ -151,9 +150,7 @@ mod tests {
     fn output_changes_between_frames() {
         let mut wave = Wave::new();
 
-        let samples_a: Vec<f32> = (0..1024)
-            .map(|i| (i as f32 * 0.05).sin() * 0.5)
-            .collect();
+        let samples_a: Vec<f32> = (0..1024).map(|i| (i as f32 * 0.05).sin() * 0.5).collect();
         let fft_a = fft_with_samples(samples_a);
         let mut grid_a = CellGrid::new(30, 10);
         {
@@ -161,9 +158,7 @@ mod tests {
             wave.render_tui(&mut ctx, &fft_a);
         }
 
-        let samples_b: Vec<f32> = (0..1024)
-            .map(|i| (i as f32 * 0.15).cos() * 0.8)
-            .collect();
+        let samples_b: Vec<f32> = (0..1024).map(|i| (i as f32 * 0.15).cos() * 0.8).collect();
         let fft_b = fft_with_samples(samples_b);
         let mut grid_b = CellGrid::new(30, 10);
         {

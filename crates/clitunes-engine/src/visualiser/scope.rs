@@ -67,7 +67,8 @@ impl Visualiser for Scope {
 
         let samples = &fft.samples;
         if samples.len() < 2 {
-            self.braille.compose(grid, |_, _, _| (Rgb::BLACK, Rgb::BLACK));
+            self.braille
+                .compose(grid, |_, _, _| (Rgb::BLACK, Rgb::BLACK));
             return;
         }
 
@@ -106,7 +107,6 @@ impl Visualiser for Scope {
                 (Rgb::BLACK, Rgb::BLACK)
             }
         });
-
     }
 }
 
@@ -127,9 +127,7 @@ mod tests {
     #[test]
     fn render_with_nonzero_fft_produces_braille() {
         let mut scope = Scope::new();
-        let samples: Vec<f32> = (0..1024)
-            .map(|i| (i as f32 * 0.03).sin() * 0.6)
-            .collect();
+        let samples: Vec<f32> = (0..1024).map(|i| (i as f32 * 0.03).sin() * 0.6).collect();
         let fft = fft_with_samples(samples);
         let mut grid = CellGrid::new(40, 12);
         {
@@ -151,9 +149,7 @@ mod tests {
     fn output_changes_between_frames() {
         let mut scope = Scope::new();
 
-        let samples: Vec<f32> = (0..1024)
-            .map(|i| (i as f32 * 0.03).sin() * 0.6)
-            .collect();
+        let samples: Vec<f32> = (0..1024).map(|i| (i as f32 * 0.03).sin() * 0.6).collect();
         let fft = fft_with_samples(samples.clone());
         let mut grid_a = CellGrid::new(30, 10);
         {

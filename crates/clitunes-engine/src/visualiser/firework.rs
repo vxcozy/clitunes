@@ -113,9 +113,7 @@ impl Visualiser for Firework {
 
         // Transient detection: launch firework on energy spike.
         let delta = e - self.prev_energy;
-        if delta > TRANSIENT_THRESHOLD
-            && self.cooldown == 0
-            && self.fireworks.len() < MAX_FIREWORKS
+        if delta > TRANSIENT_THRESHOLD && self.cooldown == 0 && self.fireworks.len() < MAX_FIREWORKS
         {
             let x = self.rand_f32() * bw;
             let apex_y = bh * (0.2 + self.rand_f32() * 0.4); // 20-60% from top
@@ -154,8 +152,7 @@ impl Visualiser for Firework {
                             rng ^= rng >> 17;
                             rng ^= rng << 5;
                             rng = rng.max(1);
-                            let angle =
-                                (rng % 10_000) as f32 / 10_000.0 * std::f32::consts::TAU;
+                            let angle = (rng % 10_000) as f32 / 10_000.0 * std::f32::consts::TAU;
                             rng ^= rng << 13;
                             rng ^= rng >> 17;
                             rng ^= rng << 5;

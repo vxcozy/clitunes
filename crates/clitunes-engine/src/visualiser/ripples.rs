@@ -88,7 +88,6 @@ impl Ripples {
             hue,
         });
     }
-
 }
 
 impl Default for Ripples {

@@ -1,11 +1,6 @@
 use super::cell_grid::{Cell, CellGrid, Rgb};
 
-const BRAILLE_BIT: [[u8; 2]; 4] = [
-    [0x01, 0x08],
-    [0x02, 0x10],
-    [0x04, 0x20],
-    [0x40, 0x80],
-];
+const BRAILLE_BIT: [[u8; 2]; 4] = [[0x01, 0x08], [0x02, 0x10], [0x04, 0x20], [0x40, 0x80]];
 
 pub struct BrailleBuffer {
     dots: Vec<bool>,
@@ -160,7 +155,7 @@ mod tests {
         let mut buf = BrailleBuffer::new(1, 1);
         buf.set(0, 0, true); // bit 0x01
         buf.set(1, 0, true); // bit 0x08
-        // Expected: 0x2800 + 0x01 + 0x08 = 0x2809
+                             // Expected: 0x2800 + 0x01 + 0x08 = 0x2809
         let mut grid = CellGrid::new(1, 1);
         buf.compose(&mut grid, |_, _, _| (Rgb::BLACK, Rgb::BLACK));
         assert_eq!(grid.cells()[0].ch, '\u{2809}');
@@ -226,7 +221,10 @@ mod tests {
         assert!(buf.get(5, 11));
         // At least the endpoints and some intermediate dots should be set
         let set_count: usize = buf.dots.iter().filter(|&&d| d).count();
-        assert!(set_count >= 10, "diagonal should set many dots, got {set_count}");
+        assert!(
+            set_count >= 10,
+            "diagonal should set many dots, got {set_count}"
+        );
     }
 
     #[test]

@@ -88,8 +88,7 @@ impl Visualiser for Terrain {
         let new_height = if fft.magnitudes.is_empty() {
             0.2
         } else {
-            let avg: f32 =
-                fft.magnitudes.iter().sum::<f32>() / fft.magnitudes.len() as f32;
+            let avg: f32 = fft.magnitudes.iter().sum::<f32>() / fft.magnitudes.len() as f32;
             let compressed = (1.0 + avg / 500.0).ln().min(1.0);
             let noise = hash_noise(len.wrapping_add((energy * 10000.0) as usize));
             (compressed * 0.5 + noise * 0.3 + 0.2).clamp(0.0, 1.0)

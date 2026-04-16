@@ -78,7 +78,6 @@ impl Starfield {
         let hue = self.rand();
         Star { x, y, z, hue }
     }
-
 }
 
 impl Default for Starfield {

@@ -75,7 +75,7 @@ impl Visualiser for Scatter {
         let bh_f = bh as f32;
 
         let mags = &fft.magnitudes;
-        let num_bands = mags.len().min(64).max(1);
+        let num_bands = mags.len().clamp(1, 64);
 
         for y in 0..bh {
             for x in 0..bw {

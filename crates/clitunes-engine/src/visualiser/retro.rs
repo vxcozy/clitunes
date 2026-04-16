@@ -91,12 +91,8 @@ impl Visualiser for Retro {
                     let t = (i as f32 + 0.5) / num_v_lines as f32;
                     let spread = (t - 0.5) * 2.0;
                     let bottom_x = center_x as f32 + spread * bw as f32 * 0.8;
-                    self.braille.line(
-                        center_x,
-                        horizon_y,
-                        bottom_x as i32,
-                        bh - 1,
-                    );
+                    self.braille
+                        .line(center_x, horizon_y, bottom_x as i32, bh - 1);
                 }
             }
         }
@@ -138,8 +134,7 @@ impl Visualiser for Retro {
             let amplitude_scale = min_dim * 0.12;
 
             for x in 0..bw {
-                let band_idx =
-                    ((x as usize) * num_bands / (bw as usize).max(1)).min(num_bands - 1);
+                let band_idx = ((x as usize) * num_bands / (bw as usize).max(1)).min(num_bands - 1);
                 let mag = (1.0 + mags[band_idx] / 500.0).ln().min(1.0);
                 let offset = (mag * amplitude_scale) as i32;
                 let y = (horizon_y - offset).clamp(0, bh - 1);
@@ -151,8 +146,7 @@ impl Visualiser for Retro {
         let cell_h = h;
         let horizon_cell = (cell_h as f32 * 0.55) as u16;
         let sun_center_cell = (cell_h as f32 * 0.35) as u16;
-        let sun_radius_cells =
-            ((min_dim * 0.15 + energy * min_dim * 0.08) / 4.0) as u16;
+        let sun_radius_cells = ((min_dim * 0.15 + energy * min_dim * 0.08) / 4.0) as u16;
         let sun_top = sun_center_cell.saturating_sub(sun_radius_cells);
         let sun_bottom = (sun_center_cell + sun_radius_cells).min(cell_h);
 

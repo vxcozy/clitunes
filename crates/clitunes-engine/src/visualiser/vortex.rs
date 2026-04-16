@@ -51,7 +51,6 @@ impl Vortex {
             energy: EnergyTracker::new(0.5, 0.9, 500.0),
         }
     }
-
 }
 
 impl Default for Vortex {

@@ -71,9 +71,8 @@ impl Visualiser for Butterfly {
 
         let num_bands = fft.magnitudes.len().min(64);
         if num_bands == 0 {
-            self.braille.compose(grid, |_, _, _| {
-                (Rgb::BLACK, Rgb::new(4, 0, 6))
-            });
+            self.braille
+                .compose(grid, |_, _, _| (Rgb::BLACK, Rgb::new(4, 0, 6)));
             return;
         }
 
@@ -90,15 +89,13 @@ impl Visualiser for Butterfly {
 
             let spread = (energy * half_width as f32) as u16;
 
-            let wobble =
-                (self.frame as f32 * 0.1 + band as f32 * 0.5).sin() * 3.0;
+            let wobble = (self.frame as f32 * 0.1 + band as f32 * 0.5).sin() * 3.0;
 
             let y_start = (band as f32 * rows_per_band) as u16;
             let y_end = (((band + 1) as f32 * rows_per_band) as u16).min(bh);
 
             for y in y_start..y_end {
-                let effective_spread =
-                    (spread as f32 + wobble).max(0.0) as u16;
+                let effective_spread = (spread as f32 + wobble).max(0.0) as u16;
 
                 // Left wing: center - effective_spread .. center
                 let left_start = center_x.saturating_sub(effective_spread);
@@ -179,7 +176,9 @@ mod tests {
         // Advance frame counter significantly so wobble changes.
         for _ in 0..60 {
             let mut grid_tmp = CellGrid::new(30, 10);
-            let mut ctx = TuiContext { grid: &mut grid_tmp };
+            let mut ctx = TuiContext {
+                grid: &mut grid_tmp,
+            };
             viz.render_tui(&mut ctx, &fft);
         }
 
@@ -195,10 +194,7 @@ mod tests {
             .zip(grid_b.cells().iter())
             .filter(|(a, b)| a.ch != b.ch)
             .count();
-        assert!(
-            diff > 0,
-            "different frames should produce different output"
-        );
+        assert!(diff > 0, "different frames should produce different output");
     }
 
     #[test]

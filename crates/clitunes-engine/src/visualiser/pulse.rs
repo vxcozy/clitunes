@@ -134,8 +134,7 @@ impl Visualiser for Pulse {
 
             let hue = lerp(0.33, 0.0, cell_dist.min(1.0));
             let sat = 0.8;
-            let val =
-                lerp(0.8, 0.4, cell_dist.min(1.0)) * (dot_count as f32 / 8.0).max(0.1);
+            let val = lerp(0.8, 0.4, cell_dist.min(1.0)) * (dot_count as f32 / 8.0).max(0.1);
 
             let (r, g, b) = hsv_to_rgb(hue, sat, val);
             let fg = Rgb::new(f32_to_u8(r), f32_to_u8(g), f32_to_u8(b));

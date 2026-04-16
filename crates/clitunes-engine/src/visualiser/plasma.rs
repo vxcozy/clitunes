@@ -45,7 +45,6 @@ impl Plasma {
             energy: EnergyTracker::new(0.6, 0.9, 500.0),
         }
     }
-
 }
 
 impl Default for Plasma {

@@ -100,7 +100,6 @@ impl Metaballs {
             energy: EnergyTracker::new(0.6, 0.92, 500.0),
         }
     }
-
 }
 
 impl Default for Metaballs {

@@ -59,7 +59,6 @@ impl Moire {
             energy: EnergyTracker::new(0.5, 0.9, 500.0),
         }
     }
-
 }
 
 impl Default for Moire {
@@ -198,7 +197,10 @@ mod tests {
         for _ in 0..20 {
             m.energy.update(&loud);
         }
-        assert!(m.energy.energy() > 0.5, "energy should ramp up with loud input");
+        assert!(
+            m.energy.energy() > 0.5,
+            "energy should ramp up with loud input"
+        );
     }
 
     #[test]

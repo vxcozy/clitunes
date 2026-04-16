@@ -49,6 +49,10 @@ pub mod terrain;
 pub mod scope;
 pub mod heartbeat;
 pub mod pulse;
+pub mod rain;
+pub mod sakura;
+pub mod firework;
+pub mod retro;
 
 pub use ansi_writer::AnsiWriter;
 pub use auralis::Auralis;
@@ -76,6 +80,10 @@ pub use butterfly::Butterfly;
 pub use scatter::Scatter;
 pub use terrain::Terrain;
 pub use pulse::Pulse;
+pub use rain::Rain;
+pub use sakura::Sakura;
+pub use firework::Firework;
+pub use retro::Retro;
 
 /// Context passed to a visualiser each frame. The visualiser paints into
 /// the mutable `grid`; the main loop's ANSI writer emits it afterwards.

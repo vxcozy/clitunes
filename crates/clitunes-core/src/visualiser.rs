@@ -29,6 +29,10 @@ pub enum VisualiserId {
     Terrain,
     Butterfly,
     Pulse,
+    Rain,
+    Sakura,
+    Firework,
+    Retro,
 }
 
 impl VisualiserId {
@@ -57,6 +61,10 @@ impl VisualiserId {
             Self::Terrain => "terrain",
             Self::Butterfly => "butterfly",
             Self::Pulse => "pulse",
+            Self::Rain => "rain",
+            Self::Sakura => "sakura",
+            Self::Firework => "firework",
+            Self::Retro => "retro",
         }
     }
 
@@ -85,6 +93,10 @@ impl VisualiserId {
             "terrain" => Some(Self::Terrain),
             "butterfly" => Some(Self::Butterfly),
             "pulse" => Some(Self::Pulse),
+            "rain" => Some(Self::Rain),
+            "sakura" => Some(Self::Sakura),
+            "firework" => Some(Self::Firework),
+            "retro" => Some(Self::Retro),
             _ => None,
         }
     }

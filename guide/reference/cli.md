@@ -108,6 +108,10 @@ Runs the Spotify OAuth flow and caches credentials. See
 | `terrain` | Braille scrolling mountain range shaped by spectrum |
 | `butterfly` | Braille mirrored Rorschach inkblot from frequency bands |
 | `pulse` | Braille pulsating circle with shockwave rings on beats |
+| `rain` | Box-drawing falling rain streaks driven by frequency bands |
+| `sakura` | Braille cherry blossom petals drifting with audio energy |
+| `firework` | Braille particle explosions with rising trails and bursts |
+| `retro` | Braille synthwave scene with sun, wave, and perspective grid |
 
 ## Exit codes
 

@@ -120,11 +120,11 @@ daemon inherits it on launch.
 Empty or whitespace-only values are treated as "not set" and fall back
 to the shared client ID.
 
-## Spotify Connect (v1.2)
+## Spotify Connect
 
-Spotify Connect support — letting clitunes appear as a playback target in
-the Spotify app — is planned for v1.2. This will allow you to start playback
-from your phone or the Spotify desktop app and route audio to clitunes.
+clitunes can appear as a Spotify Connect device, letting you start
+playback from the Spotify app on your phone or desktop. See the
+[Spotify Connect how-to](spotify-connect.md) for setup and usage.
 
 ## Troubleshooting
 

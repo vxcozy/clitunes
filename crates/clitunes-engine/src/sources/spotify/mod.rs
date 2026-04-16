@@ -16,7 +16,7 @@ pub mod sink;
 
 pub use auth::{default_credentials_path, load_credentials, load_or_authenticate, AuthResult};
 #[cfg(feature = "connect")]
-pub use connect::{ConnectRuntime, ConnectSource};
+pub use connect::{ConnectRuntime, ConnectSinkSlot, ConnectSource};
 pub use handle::{PlaybackGuard, SpotifyHandle};
 #[cfg(feature = "webapi")]
 pub mod token;

@@ -76,6 +76,7 @@ librespot-oauth = { version = "0.8", default-features = false, features = ["rust
 # straightforward across Linux and macOS.
 librespot-connect = { version = "0.8", default-features = false, features = ["rustls-tls-native-roots"] }
 librespot-discovery = { version = "0.8", default-features = false, features = ["rustls-tls-native-roots", "with-libmdns"] }
+sha1 = "0.10"
 rubato = "2"
 
 # Spotify Web API (v1.2). rspotify wraps the REST endpoints for search,

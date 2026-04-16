@@ -104,6 +104,10 @@ Runs the Spotify OAuth flow and caches credentials. See
 | `barsdot` | Braille-stippled spectrum bars |
 | `barsoutline` | Box-drawing outline tracing the spectrum top edge |
 | `binary` | Streaming binary digits scrolling with audio energy |
+| `scatter` | Braille particle field twinkling with audio density |
+| `terrain` | Braille scrolling mountain range shaped by spectrum |
+| `butterfly` | Braille mirrored Rorschach inkblot from frequency bands |
+| `pulse` | Braille pulsating circle with shockwave rings on beats |
 
 ## Exit codes
 

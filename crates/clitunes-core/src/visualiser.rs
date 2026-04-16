@@ -25,6 +25,10 @@ pub enum VisualiserId {
     BarsDot,
     BarsOutline,
     Binary,
+    Scatter,
+    Terrain,
+    Butterfly,
+    Pulse,
 }
 
 impl VisualiserId {
@@ -49,6 +53,10 @@ impl VisualiserId {
             Self::BarsDot => "barsdot",
             Self::BarsOutline => "barsoutline",
             Self::Binary => "binary",
+            Self::Scatter => "scatter",
+            Self::Terrain => "terrain",
+            Self::Butterfly => "butterfly",
+            Self::Pulse => "pulse",
         }
     }
 
@@ -73,6 +81,10 @@ impl VisualiserId {
             "barsdot" => Some(Self::BarsDot),
             "barsoutline" => Some(Self::BarsOutline),
             "binary" => Some(Self::Binary),
+            "scatter" => Some(Self::Scatter),
+            "terrain" => Some(Self::Terrain),
+            "butterfly" => Some(Self::Butterfly),
+            "pulse" => Some(Self::Pulse),
             _ => None,
         }
     }

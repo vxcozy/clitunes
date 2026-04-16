@@ -43,8 +43,12 @@ pub mod tideline;
 pub mod tunnel;
 pub mod vortex;
 pub mod wave;
+pub mod butterfly;
+pub mod scatter;
+pub mod terrain;
 pub mod scope;
 pub mod heartbeat;
+pub mod pulse;
 
 pub use ansi_writer::AnsiWriter;
 pub use auralis::Auralis;
@@ -68,6 +72,10 @@ pub use bars_dot::BarsDot;
 pub use bars_outline::BarsOutline;
 pub use binary::Binary;
 pub use classic_peak::ClassicPeak;
+pub use butterfly::Butterfly;
+pub use scatter::Scatter;
+pub use terrain::Terrain;
+pub use pulse::Pulse;
 
 /// Context passed to a visualiser each frame. The visualiser paints into
 /// the mutable `grid`; the main loop's ANSI writer emits it afterwards.

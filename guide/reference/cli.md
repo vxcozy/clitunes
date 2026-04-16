@@ -38,7 +38,19 @@ clitunes viz <name>
 clitunes source radio <uuid>
 clitunes source local <path>
 clitunes source spotify:<uri>
+clitunes connect disconnect
 ```
+
+### Browse and search
+
+```
+clitunes search "<query>" [limit]
+clitunes browse <category> [limit]
+clitunes browse-playlist <id-or-uri> [limit]
+```
+
+See [Browse and search Spotify](../how-to/browse-spotify.md) for
+details and output format.
 
 ### Status query
 
@@ -47,6 +59,15 @@ clitunes status [--json]
 ```
 
 Returns current playback state as JSON.
+
+### Authentication
+
+```
+clitunes auth
+```
+
+Runs the Spotify OAuth flow and caches credentials. See
+[Play Spotify tracks](../how-to/play-spotify.md) for details.
 
 ## Keyboard shortcuts
 

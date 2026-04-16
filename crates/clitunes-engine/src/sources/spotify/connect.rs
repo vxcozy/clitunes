@@ -303,6 +303,7 @@ async fn drain_pcm(
 /// reuses the existing mDNS advertisement.
 pub struct ConnectRuntime {
     shutdown_tx: mpsc::UnboundedSender<()>,
+    disconnect_tx: mpsc::UnboundedSender<()>,
     task: JoinHandle<()>,
 }
 
@@ -344,6 +345,7 @@ impl ConnectRuntime {
         );
 
         let (shutdown_tx, shutdown_rx) = mpsc::unbounded_channel();
+        let (disconnect_tx, disconnect_rx) = mpsc::unbounded_channel();
         let task = runtime.spawn(run_connect_loop(
             discovery,
             connect_config,
@@ -352,9 +354,20 @@ impl ConnectRuntime {
             source_cmd_tx,
             event_tx,
             shutdown_rx,
+            disconnect_rx,
         ));
 
-        Ok(Self { shutdown_tx, task })
+        Ok(Self {
+            shutdown_tx,
+            disconnect_tx,
+            task,
+        })
+    }
+
+    /// Return a cloneable sender that signals "disconnect the active
+    /// Spirc but keep Discovery running". Used by the verb dispatcher.
+    pub fn disconnect_sender(&self) -> mpsc::UnboundedSender<()> {
+        self.disconnect_tx.clone()
     }
 
     /// Signal the runtime to stop and await the task. Idempotent — a
@@ -392,6 +405,7 @@ async fn run_connect_loop(
     source_cmd_tx: std::sync::mpsc::Sender<crate::daemon::event_loop::SourceCommand>,
     event_tx: mpsc::Sender<Event>,
     mut shutdown_rx: mpsc::UnboundedReceiver<()>,
+    mut disconnect_rx: mpsc::UnboundedReceiver<()>,
 ) {
     let device_id = device_id_from_name(&connect_config.name);
     let librespot_config = LibrespotConnectConfig {
@@ -420,6 +434,30 @@ async fn run_connect_loop(
                 }
                 sink_slot.clear();
                 break;
+            }
+
+            _ = disconnect_rx.recv() => {
+                if current_spirc.is_some() {
+                    info!("connect: disconnect requested, tearing down spirc");
+                    if let Some(spirc) = current_spirc.take() {
+                        if let Err(e) = Spirc::shutdown(&spirc) {
+                            warn!(error = %e, "connect: spirc shutdown error on disconnect");
+                        }
+                    }
+                    if let Some(task) = current_task.take() {
+                        let _ = task.await;
+                    }
+                    drop(current_playback.take());
+                    event_subscription = None;
+                    sink_slot.clear();
+                    announced_connected = false;
+                    let _ = event_tx
+                        .send(Event::ConnectDeviceDisconnected)
+                        .await;
+                    info!("connect: disconnected, awaiting next discovery");
+                } else {
+                    debug!("connect: disconnect requested but no active spirc, ignoring");
+                }
             }
 
             Some(credentials) = discovery.next() => {

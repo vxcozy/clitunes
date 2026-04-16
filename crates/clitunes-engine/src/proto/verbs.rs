@@ -54,6 +54,11 @@ pub enum Verb {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         limit: Option<u32>,
     },
+    /// Disconnect the active Spotify Connect session. Shuts down the
+    /// Spirc but keeps Discovery advertising so the device remains
+    /// visible. Idempotent: disconnecting when nothing is connected
+    /// is a no-op with `ok: true`.
+    ConnectDisconnect,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -165,6 +170,18 @@ mod tests {
         };
         let line = env.to_line();
         assert!(line.contains("spotify"));
+        let parsed = VerbEnvelope::from_line(&line).unwrap();
+        assert_eq!(parsed, env);
+    }
+
+    #[test]
+    fn connect_disconnect_roundtrip() {
+        let env = VerbEnvelope {
+            cmd_id: "cd-1".into(),
+            verb: Verb::ConnectDisconnect,
+        };
+        let line = env.to_line();
+        assert!(line.contains("connect_disconnect"));
         let parsed = VerbEnvelope::from_line(&line).unwrap();
         assert_eq!(parsed, env);
     }

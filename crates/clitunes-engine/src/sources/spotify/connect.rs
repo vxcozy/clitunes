@@ -156,6 +156,7 @@ impl Source for ConnectSource {
 
             let playback_stop = Arc::clone(&inner_stop);
             scope.spawn(move || {
+                let _guard = super::StopGuard(Arc::clone(&playback_stop));
                 let rt = match Builder::new_current_thread().enable_all().build() {
                     Ok(rt) => rt,
                     Err(e) => {
@@ -169,7 +170,6 @@ impl Source for ConnectSource {
                         error!(error = %e, "connect: PCM drain ended with error");
                     }
                 });
-                playback_stop.store(true, Ordering::SeqCst);
             });
         });
     }

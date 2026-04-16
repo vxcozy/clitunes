@@ -27,6 +27,18 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+/// Drop guard that sets an [`AtomicBool`] to `true` on drop — including
+/// during panic unwind. Used in source-runner playback threads so
+/// `inner_stop` is always signalled, preventing the mirror thread from
+/// spinning forever if the playback thread panics.
+pub(crate) struct StopGuard(Arc<AtomicBool>);
+
+impl Drop for StopGuard {
+    fn drop(&mut self) {
+        self.0.store(true, Ordering::SeqCst);
+    }
+}
+
 use anyhow::Result;
 use librespot_core::spotify_uri::SpotifyUri;
 use librespot_playback::player::PlayerEvent;
@@ -110,7 +122,7 @@ impl super::Source for SpotifySource {
             // Watcher thread: polls outer stop every 50ms.
             let mirror = Arc::clone(&inner_stop);
             scope.spawn(move || {
-                while !stop.load(Ordering::Relaxed) {
+                while !stop.load(Ordering::Relaxed) && !mirror.load(Ordering::Relaxed) {
                     std::thread::sleep(Duration::from_millis(50));
                 }
                 mirror.store(true, Ordering::SeqCst);
@@ -119,6 +131,7 @@ impl super::Source for SpotifySource {
             // Main playback thread with its own tokio runtime.
             let playback_stop = Arc::clone(&inner_stop);
             scope.spawn(move || {
+                let _guard = StopGuard(Arc::clone(&playback_stop));
                 let rt = match Builder::new_current_thread().enable_all().build() {
                     Ok(rt) => rt,
                     Err(e) => {

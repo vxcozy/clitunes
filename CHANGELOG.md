@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [1.0.0-rc1] - 2026-04-17
+
+Release-candidate pre-release. **Do not use.**
+
+This tag exists solely to exercise the `.github/workflows/release.yml`
+pipeline end-to-end (4-target build, ad-hoc macOS codesign, CHANGELOG-
+derived release notes, 8-asset upload) before cutting v1.0.0. The
+corresponding GitHub release will be deleted once verified. The v1.0.0
+tag is the authoritative public release.
+
 ## [1.0.0] - 2026-MM-DD
 
 First public release.

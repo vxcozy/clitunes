@@ -22,7 +22,7 @@ jobs:
           - target: x86_64-unknown-linux-gnu
             os: ubuntu-22.04  # glibc 2.35 floor for Debian 12 / RHEL 9 compat
           - target: aarch64-unknown-linux-gnu
-            os: ubuntu-22.04
+            os: ubuntu-22.04-arm  # native arm64 runner — no cross-compile
 
     runs-on: ${{ matrix.os }}
 
@@ -41,13 +41,6 @@ jobs:
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y libasound2-dev pkg-config
 
-      - name: Install cross-compilation deps (aarch64-linux)
-        if: matrix.target == 'aarch64-unknown-linux-gnu'
-        run: |
-          sudo apt-get install -y gcc-aarch64-linux-gnu
-          echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc" >> "$GITHUB_ENV"
-          echo "PKG_CONFIG_SYSROOT_DIR=/usr/aarch64-linux-gnu" >> "$GITHUB_ENV"
-
       - name: Build release binaries
         run: |
           cargo build --release --target ${{ matrix.target }} -p clitunes
@@ -55,13 +48,8 @@ jobs:
 
       - name: Strip binaries
         run: |
-          if [[ "${{ matrix.target }}" == aarch64-unknown-linux-gnu ]]; then
-            aarch64-linux-gnu-strip target/${{ matrix.target }}/release/clitunes
-            aarch64-linux-gnu-strip target/${{ matrix.target }}/release/clitunesd
-          else
-            strip target/${{ matrix.target }}/release/clitunes
-            strip target/${{ matrix.target }}/release/clitunesd
-          fi
+          strip target/${{ matrix.target }}/release/clitunes
+          strip target/${{ matrix.target }}/release/clitunesd
 
       - name: Ad-hoc codesign (macOS)
         if: runner.os == 'macOS'

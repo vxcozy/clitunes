@@ -89,17 +89,19 @@ chrono = { version = "0.4", default-features = false, features = ["clock"] }
 # fetched from Spotify's CDN. Client-only — daemon never touches images (D15).
 image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
 
-# Patch librespot crates to dev branch which fixes the vergen-gitcl build
-# conflict (vergen-lib 0.1.6 vs 9.1.0 trait mismatch in build script).
-# See: https://github.com/rustyhorde/vergen/issues/478
-# Remove this patch block when librespot publishes a release with the fix.
+# Pin librespot crates to a specific dev-branch commit. The 0.8.0 crates.io
+# release has a vergen-gitcl build-script conflict (rustyhorde/vergen#478);
+# dev has the fix plus 13 other legitimate upstream commits (bug fixes +
+# additive API — see CHANGELOG Known Limitations for the audit). Reviewed
+# the full diff v0.8.0...33bf3a7 before pinning for v1.0.0.
+# Remove this patch block when librespot cuts 0.8.1 on crates.io.
 [patch.crates-io]
-librespot-core      = { git = "https://github.com/librespot-org/librespot", branch = "dev" }
-librespot-playback  = { git = "https://github.com/librespot-org/librespot", branch = "dev" }
-librespot-metadata  = { git = "https://github.com/librespot-org/librespot", branch = "dev" }
-librespot-oauth     = { git = "https://github.com/librespot-org/librespot", branch = "dev" }
-librespot-connect   = { git = "https://github.com/librespot-org/librespot", branch = "dev" }
-librespot-discovery = { git = "https://github.com/librespot-org/librespot", branch = "dev" }
+librespot-core      = { git = "https://github.com/librespot-org/librespot", rev = "33bf3a77ed4b549df67e8347d7d6e55b007b3ec2" }
+librespot-playback  = { git = "https://github.com/librespot-org/librespot", rev = "33bf3a77ed4b549df67e8347d7d6e55b007b3ec2" }
+librespot-metadata  = { git = "https://github.com/librespot-org/librespot", rev = "33bf3a77ed4b549df67e8347d7d6e55b007b3ec2" }
+librespot-oauth     = { git = "https://github.com/librespot-org/librespot", rev = "33bf3a77ed4b549df67e8347d7d6e55b007b3ec2" }
+librespot-connect   = { git = "https://github.com/librespot-org/librespot", rev = "33bf3a77ed4b549df67e8347d7d6e55b007b3ec2" }
+librespot-discovery = { git = "https://github.com/librespot-org/librespot", rev = "33bf3a77ed4b549df67e8347d7d6e55b007b3ec2" }
 
 [profile.release]
 lto = "thin"

@@ -2,13 +2,19 @@
 
 [![Release](https://img.shields.io/github/v/release/vxcozy/clitunes?sort=semver)](https://github.com/vxcozy/clitunes/releases/latest)
 [![CI](https://img.shields.io/github/actions/workflow/status/vxcozy/clitunes/ci.yml?branch=main&label=CI)](https://github.com/vxcozy/clitunes/actions/workflows/ci.yml)
-[![License](https://img.shields.io/github/license/vxcozy/clitunes)](LICENSE)
 
 A terminal music player with internet radio, Spotify, and real-time visualisers.
 
 Daemon/client architecture — `clitunesd` handles audio while `clitunes` renders
 visualisers at 30 fps using half-block ANSI in any terminal that supports
 24-bit color.
+
+## Releases
+
+**Latest:** [v1.0.0](https://github.com/vxcozy/clitunes/releases/tag/v1.0.0) (2026-04-17) — first public release. Radio, local files, Spotify URI playback, Spotify Connect receiver, 23 visualisers, daemon/client split. Pre-built binaries for macOS (Apple Silicon + Intel) and Linux (arm64 + x86_64).
+
+Full history in [CHANGELOG.md](CHANGELOG.md). Every tag also produces a
+[GitHub release](https://github.com/vxcozy/clitunes/releases) with checksummed tarballs.
 
 ## Install
 

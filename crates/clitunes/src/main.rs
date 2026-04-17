@@ -45,6 +45,11 @@ fn main() -> Result<()> {
         return Ok(());
     }
 
+    if let CliMode::Version = mode {
+        println!("clitunes {}", env!("CARGO_PKG_VERSION"));
+        return Ok(());
+    }
+
     if let CliMode::Auth = mode {
         return run_auth();
     }
@@ -93,7 +98,7 @@ fn main() -> Result<()> {
         CliMode::Headless(verb) => rt.block_on(run_headless(verb, &socket_path)),
         CliMode::HeadlessBrowse(verb) => rt.block_on(run_headless_browse(verb, &socket_path)),
         CliMode::StatusJson => rt.block_on(run_status_json(&socket_path)),
-        CliMode::Help | CliMode::Auth => unreachable!(),
+        CliMode::Help | CliMode::Version | CliMode::Auth => unreachable!(),
     }
 }
 
@@ -407,6 +412,7 @@ struct TuiArgs {
 
 enum CliMode {
     Help,
+    Version,
     FullTui(TuiArgs),
     Pane {
         name: String,
@@ -451,6 +457,11 @@ impl CliMode {
         // Check for --help anywhere
         if args.iter().any(|a| a == "-h" || a == "--help") {
             return Ok(CliMode::Help);
+        }
+
+        // Check for --version / -V anywhere
+        if args.iter().any(|a| a == "-V" || a == "--version") {
+            return Ok(CliMode::Version);
         }
 
         // Check for --pane
@@ -655,6 +666,10 @@ USAGE:
     clitunes connect disconnect              Disconnect active Spotify Connect session
     clitunes status [--json]                Print current status as JSON
     clitunes auth                           Authenticate with Spotify (headless-safe)
+
+GLOBAL OPTIONS:
+    -h, --help                              Show this help
+    -V, --version                           Print version and exit
 
 PANE NAMES:
     visualiser      Fullscreen visualiser (default: auralis, override with --viz)

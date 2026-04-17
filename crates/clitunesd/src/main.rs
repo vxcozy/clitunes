@@ -41,6 +41,11 @@ fn run() -> Result<ExitCode> {
         return Ok(ExitCode::SUCCESS);
     }
 
+    if args.version {
+        println!("clitunesd {}", env!("CARGO_PKG_VERSION"));
+        return Ok(ExitCode::SUCCESS);
+    }
+
     let runtime = runtime_dir().context("resolve runtime dir")?;
     let lock_path = runtime.join("clitunesd.lock");
     let lock = match acquire_at(&lock_path).context("acquire singleton lock")? {
@@ -197,6 +202,7 @@ fn install_signal_handler(stop: Arc<AtomicBool>) -> Result<()> {
 struct CliArgs {
     foreground: bool,
     help: bool,
+    version: bool,
     idle_timeout_secs: Option<u64>,
 }
 
@@ -209,6 +215,7 @@ impl CliArgs {
             match args[i].as_str() {
                 "-f" | "--foreground" => out.foreground = true,
                 "-h" | "--help" => out.help = true,
+                "-V" | "--version" => out.version = true,
                 "--idle-timeout" => {
                     i += 1;
                     let val = args
@@ -239,6 +246,7 @@ OPTIONS:
     -f, --foreground            Do not fork; log to stderr as well as the rotating log file
         --idle-timeout <secs>   Override idle shutdown timeout (default: 30s)
     -h, --help                  Show this help
+    -V, --version               Print version and exit
 
 The daemon acquires an exclusive flock at $XDG_RUNTIME_DIR/clitunes/clitunesd.lock
 (or $TMPDIR/$USER/clitunes/clitunesd.lock on macOS). A second invocation while

@@ -1,5 +1,9 @@
 # clitunes
 
+[![Release](https://img.shields.io/github/v/release/vxcozy/clitunes?sort=semver)](https://github.com/vxcozy/clitunes/releases/latest)
+[![CI](https://img.shields.io/github/actions/workflow/status/vxcozy/clitunes/ci.yml?branch=main&label=CI)](https://github.com/vxcozy/clitunes/actions/workflows/ci.yml)
+[![License](https://img.shields.io/github/license/vxcozy/clitunes)](LICENSE)
+
 A terminal music player with internet radio, Spotify, and real-time visualisers.
 
 Daemon/client architecture — `clitunesd` handles audio while `clitunes` renders

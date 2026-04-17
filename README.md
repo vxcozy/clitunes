@@ -8,9 +8,17 @@ visualisers at 30 fps using half-block ANSI in any terminal that supports
 
 ## Install
 
-**Homebrew** (macOS + Linux): launching alongside v1.0.0. Until the tap is
-live, grab pre-built binaries from the
-[releases page](https://github.com/vxcozy/clitunes/releases).
+**Homebrew** (macOS + Linux):
+
+```
+brew install vxcozy/tap/clitunes
+```
+
+**Direct download** (macOS + Linux, all four architectures):
+
+Grab the pre-built tarball from the
+[v1.0.0 release page](https://github.com/vxcozy/clitunes/releases/tag/v1.0.0)
+and drop the binaries on your PATH.
 
 **Cargo** (any Rust toolchain):
 

@@ -17,7 +17,9 @@ pub struct Butterfly {
 impl Butterfly {
     pub fn new() -> Self {
         Self {
-            energy: EnergyTracker::new(0.5, 0.88, 500.0),
+            // Release tau ~115 ms: wings flap with the beat envelope
+            // rather than coasting through quiet sections.
+            energy: EnergyTracker::new(0.5, 0.75, 500.0),
             braille: BrailleBuffer::new(1, 1),
             frame: 0,
             last_w: 0,

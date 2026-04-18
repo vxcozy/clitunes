@@ -18,7 +18,8 @@ pub struct BarsOutline {
 impl BarsOutline {
     pub fn new() -> Self {
         Self {
-            energy: EnergyTracker::new(0.5, 0.88, 500.0),
+            // Release tau ~115 ms so overlay brightness tracks the beat.
+            energy: EnergyTracker::new(0.5, 0.75, 500.0),
             scaler: SpectrumScaler::new(),
             bar_heights: Vec::new(),
             last_w: 0,
@@ -57,7 +58,9 @@ impl BarsOutline {
             if compressed > old {
                 self.bar_heights[band] = 0.5 * old + 0.5 * compressed; // attack
             } else {
-                self.bar_heights[band] = 0.85 * old + 0.15 * compressed; // release
+                // Release tau ~148 ms at 30 fps (matches bars_dot). Previous
+                // 0.85 retention felt sluggish — bars hung above the music.
+                self.bar_heights[band] = 0.8 * old + 0.2 * compressed; // release
             }
         }
     }

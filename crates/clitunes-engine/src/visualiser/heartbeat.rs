@@ -24,7 +24,9 @@ impl Heartbeat {
     pub fn new() -> Self {
         Self {
             braille: BrailleBuffer::new(1, 1),
-            energy: EnergyTracker::new(0.5, 0.88, 500.0),
+            // Release tau ~115 ms (was ~258 ms): ECG amplitude tracks the
+            // beat envelope instead of smearing across multiple pulses.
+            energy: EnergyTracker::new(0.5, 0.75, 500.0),
             history: Vec::new(),
             last_w: 0,
             last_h: 0,

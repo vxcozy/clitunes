@@ -14,9 +14,10 @@
 
 /// One-pole envelope-follower AGC over spectrum dB levels.
 ///
-/// Attack ≈50 ms so loud transients pop immediately; release ≈2.5 s so
-/// the ceiling doesn't dive back down during brief quiet spots.
-/// Assumes a ~30 fps render loop.
+/// Attack ≈25 ms so loud transients snap to the new ceiling within a
+/// single frame; release ≈1.2 s so the ceiling recovers briskly on the
+/// other side of a drop without strobing on brief dips. Assumes a
+/// ~30 fps render loop.
 #[derive(Clone, Copy, Debug)]
 pub struct SpectrumScaler {
     peak_db: f32,
@@ -32,11 +33,14 @@ const RANGE_DB: f32 = 40.0;
 /// quiet passages instead of auto-gaining silence up to full height.
 const MIN_PEAK_DB: f32 = -30.0;
 
-/// Attack coefficient: `1 - exp(-dt / tau)` with dt ≈ 33 ms and tau ≈ 50 ms.
-const ATTACK: f32 = 0.48;
+/// Attack coefficient: `1 - exp(-dt / tau)` with dt ≈ 33 ms and tau ≈ 25 ms.
+/// Snappy enough that a kick drum transient is reflected in the same frame.
+const ATTACK: f32 = 0.735;
 
-/// Release coefficient: dt ≈ 33 ms, tau ≈ 2500 ms.
-const RELEASE: f32 = 0.013;
+/// Release coefficient: dt ≈ 33 ms, tau ≈ 1200 ms. Half the previous
+/// 2.5 s so the ceiling follows song-level dynamics instead of averaging
+/// out the last 5 seconds of the track.
+const RELEASE: f32 = 0.027;
 
 impl SpectrumScaler {
     pub fn new() -> Self {

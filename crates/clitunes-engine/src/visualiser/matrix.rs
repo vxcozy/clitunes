@@ -39,7 +39,9 @@ impl Matrix {
         Self {
             start: Instant::now(),
             ramp: DensityRamp::new(" .·:;+xX#%@"),
-            energy: EnergyTracker::new(0.5, 0.88, 500.0),
+            // Release tau ~115 ms so drop speed drops with the music on
+            // a phrase boundary rather than glide-decaying for a second.
+            energy: EnergyTracker::new(0.5, 0.75, 500.0),
             rng_state: 0xDEAD_BEEF,
         }
     }

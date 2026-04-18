@@ -19,7 +19,9 @@ impl Terrain {
     pub fn new() -> Self {
         Self {
             braille: BrailleBuffer::new(1, 1),
-            energy: EnergyTracker::new(0.5, 0.88, 500.0),
+            // Release tau ~115 ms: mountain heights track current loudness
+            // without a trailing second of inertia behind the spectrum.
+            energy: EnergyTracker::new(0.5, 0.75, 500.0),
             heights: Vec::new(),
             last_w: 0,
             last_h: 0,

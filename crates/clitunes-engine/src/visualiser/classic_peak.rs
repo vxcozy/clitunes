@@ -29,7 +29,9 @@ pub struct ClassicPeak {
 impl ClassicPeak {
     pub fn new() -> Self {
         Self {
-            energy: EnergyTracker::new(0.5, 0.88, 500.0),
+            // Release tau ~115 ms so the classic peak-cap accent tracks
+            // song-level dynamics instead of trailing by a quarter second.
+            energy: EnergyTracker::new(0.5, 0.75, 500.0),
             scaler: SpectrumScaler::new(),
             bar_heights: Vec::new(),
             peak_heights: Vec::new(),

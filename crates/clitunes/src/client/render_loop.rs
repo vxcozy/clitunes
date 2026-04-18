@@ -610,6 +610,31 @@ impl RenderLoop {
                 .fft
                 .snapshot_from(&self.pcm_buf[..n.max(1)], self.sample_rate);
 
+            // Per-~60-frame signal-path trace. Gated behind the existing
+            // tracing filter (`RUST_LOG=clitunes::audio=trace`) so it stays
+            // silent in normal runs but gives a one-shot diagnostic of
+            // whether PCM is reaching the FFT tap. Reports frames read from
+            // the SPMC consumer, peak |sample| across the windowed FFT
+            // input, and peak FFT bin magnitude — if `n` is steady but peak
+            // sample stays at zero the break is upstream (ring/producer);
+            // if the FFT input has signal but magnitudes stay tiny, look at
+            // normalisation.
+            if state.frame_idx.is_multiple_of(60) {
+                let peak_sample = snapshot
+                    .samples
+                    .iter()
+                    .fold(0.0_f32, |acc, s| acc.max(s.abs()));
+                let peak_mag = snapshot.magnitudes.iter().copied().fold(0.0_f32, f32::max);
+                tracing::trace!(
+                    target: "clitunes::audio",
+                    frames_read = n,
+                    peak_sample,
+                    peak_mag,
+                    sample_rate = self.sample_rate,
+                    "fft signal path"
+                );
+            }
+
             // Render active visualiser.
             {
                 let mut ctx = TuiContext {

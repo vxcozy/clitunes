@@ -78,9 +78,11 @@ impl Visualiser for Pulse {
         let cx = bw / 2;
         let cy = bh / 2;
 
-        // Compute main circle radius based on energy.
-        let min_dim = cx.min(cy) as f32;
-        let base_radius = min_dim * 0.3 + energy * min_dim * 0.5;
+        // Scale the pulsing disc against the longer half-axis so the circle
+        // fills the pane even on wide terminals, rather than sitting as a
+        // small island in the middle with black gutters.
+        let max_dim = cx.max(cy) as f32;
+        let base_radius = max_dim * 0.35 + energy * max_dim * 0.65;
 
         // Detect transient and spawn shockwave ring.
         if energy - self.prev_energy > TRANSIENT_THRESHOLD {
@@ -228,6 +230,39 @@ mod tests {
         let mut grid = CellGrid::new(40, 12);
         let mut ctx = TuiContext { grid: &mut grid };
         pulse.render_tui(&mut ctx, &fft);
+    }
+
+    #[test]
+    fn fills_pane_at_120x40() {
+        let mut pulse = Pulse::new();
+        let fft = loud_fft();
+        let mut grid = CellGrid::new(120, 40);
+        // Drive energy high so the disc reaches its full radius.
+        for _ in 0..20 {
+            let mut ctx = TuiContext { grid: &mut grid };
+            pulse.render_tui(&mut ctx, &fft);
+        }
+
+        let has_dot = |row: u16, col_range: std::ops::Range<u16>| {
+            col_range.clone().any(|x| {
+                let cell = grid.cells()[(row as usize) * 120 + x as usize];
+                cell.ch != '\u{2800}' && cell.ch != ' '
+            })
+        };
+        let has_dot_col = |col: u16, row_range: std::ops::Range<u16>| {
+            row_range.clone().any(|y| {
+                let cell = grid.cells()[(y as usize) * 120 + col as usize];
+                cell.ch != '\u{2800}' && cell.ch != ' '
+            })
+        };
+
+        assert!(has_dot(0, 0..120), "top edge should have painted dots");
+        assert!(has_dot(39, 0..120), "bottom edge should have painted dots");
+        assert!(has_dot_col(0, 0..40), "left edge should have painted dots");
+        assert!(
+            has_dot_col(119, 0..40),
+            "right edge should have painted dots"
+        );
     }
 
     #[test]

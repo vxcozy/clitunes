@@ -120,14 +120,17 @@ impl Visualiser for Heartbeat {
         let base = 0.3_f32;
         let brightness = (base + energy * 0.7).min(1.0);
 
+        // Muted hospital-monitor green so empty cells carry the palette
+        // rather than leave a raw black pane.
+        let gutter = Rgb::new(0, 6, 2);
         self.braille.compose(grid, |_cx, _cy, dot_count| {
             if dot_count > 0 {
                 let peak_boost = (dot_count as f32 / 8.0).min(1.0);
                 let green_val = brightness * (0.5 + 0.5 * peak_boost);
                 let fg = Rgb::new(0, f32_to_u8(green_val), 0);
-                (fg, Rgb::BLACK)
+                (fg, gutter)
             } else {
-                (Rgb::BLACK, Rgb::BLACK)
+                (gutter, gutter)
             }
         });
     }
@@ -207,6 +210,37 @@ mod tests {
             .filter(|(a, b)| a.ch != b.ch)
             .count();
         assert!(diff > 0, "different inputs should produce different output");
+    }
+
+    #[test]
+    fn gutter_is_tinted_not_black() {
+        // Even with silent input the pane must carry the hospital-green
+        // gutter palette instead of collapsing to raw black.
+        let mut hb = Heartbeat::new();
+        let fft = fft_with_samples(vec![0.0; 1024]);
+        let mut grid = CellGrid::new(120, 40);
+        {
+            let mut ctx = TuiContext { grid: &mut grid };
+            hb.render_tui(&mut ctx, &fft);
+        }
+
+        let edge_rows = [0u16, 39];
+        let edge_cols = [0u16, 119];
+
+        for row in edge_rows {
+            let any_tinted = (0..120u16).any(|x| {
+                let cell = grid.cells()[(row as usize) * 120 + x as usize];
+                cell.bg != Rgb::BLACK || cell.fg != Rgb::BLACK
+            });
+            assert!(any_tinted, "row {row} must have palette-tinted cells");
+        }
+        for col in edge_cols {
+            let any_tinted = (0..40u16).any(|y| {
+                let cell = grid.cells()[(y as usize) * 120 + col as usize];
+                cell.bg != Rgb::BLACK || cell.fg != Rgb::BLACK
+            });
+            assert!(any_tinted, "col {col} must have palette-tinted cells");
+        }
     }
 
     #[test]

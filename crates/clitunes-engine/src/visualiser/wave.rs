@@ -95,6 +95,9 @@ impl Visualiser for Wave {
         let base = 0.3_f32;
         let brightness = (base + energy * 0.7).min(1.0);
 
+        // Muted oceanic gutter so empty cells read as palette-consistent
+        // background rather than broken screen.
+        let gutter = Rgb::new(1, 3, 6);
         self.braille.compose(grid, |_cx, _cy, dot_count| {
             if dot_count > 0 {
                 // Brighter where more dots (trace peaks).
@@ -103,9 +106,9 @@ impl Visualiser for Wave {
                 let r = f32_to_u8(val * 0.2);
                 let g = f32_to_u8(val * 0.7);
                 let b = f32_to_u8(val * 1.0);
-                (Rgb::new(r, g, b), Rgb::BLACK)
+                (Rgb::new(r, g, b), gutter)
             } else {
-                (Rgb::BLACK, Rgb::BLACK)
+                (gutter, gutter)
             }
         });
     }
@@ -173,6 +176,37 @@ mod tests {
             .filter(|(a, b)| a.ch != b.ch)
             .count();
         assert!(diff > 0, "different inputs should produce different output");
+    }
+
+    #[test]
+    fn gutter_is_tinted_not_black() {
+        // With silent input the trace collapses to a baseline stripe; the
+        // rest of the pane must still carry the palette bg, not pure black.
+        let mut wave = Wave::new();
+        let fft = fft_with_samples(vec![0.0; 1024]);
+        let mut grid = CellGrid::new(120, 40);
+        {
+            let mut ctx = TuiContext { grid: &mut grid };
+            wave.render_tui(&mut ctx, &fft);
+        }
+
+        let edge_rows = [0u16, 39];
+        let edge_cols = [0u16, 119];
+
+        for row in edge_rows {
+            let any_tinted = (0..120u16).any(|x| {
+                let cell = grid.cells()[(row as usize) * 120 + x as usize];
+                cell.bg != Rgb::BLACK || cell.fg != Rgb::BLACK
+            });
+            assert!(any_tinted, "row {row} must have palette-tinted cells");
+        }
+        for col in edge_cols {
+            let any_tinted = (0..40u16).any(|y| {
+                let cell = grid.cells()[(y as usize) * 120 + col as usize];
+                cell.bg != Rgb::BLACK || cell.fg != Rgb::BLACK
+            });
+            assert!(any_tinted, "col {col} must have palette-tinted cells");
+        }
     }
 
     #[test]

@@ -62,49 +62,67 @@ impl Visualiser for Scope {
         self.ensure_buf(w, h);
         self.braille.clear();
 
-        let sub_w = self.braille.width() as f32;
-        let sub_h = self.braille.height() as f32;
+        // The Lissajous figure is intrinsically square in signal space.
+        // Letterbox on the longer axis (in braille sub-cell units — they
+        // are near-square on screen) and paint the surrounding gutter with
+        // a muted phosphor tint so the shape reads as deliberate rather
+        // than broken.
+        let buf_w = self.braille.width() as f32;
+        let buf_h = self.braille.height() as f32;
+        let square_side = buf_w.min(buf_h);
+        let sub_w = square_side;
+        let sub_h = square_side;
+        let x_margin = ((buf_w - sub_w) * 0.5).max(0.0);
+        let y_margin = ((buf_h - sub_h) * 0.5).max(0.0);
+        // Convert sub-cell margins to terminal-cell bounds for gutter paint.
+        let x_gutter_cells = (x_margin / 2.0).round() as u16;
+        let y_gutter_cells = (y_margin / 4.0).round() as u16;
 
         let samples = &fft.samples;
-        if samples.len() < 2 {
-            self.braille
-                .compose(grid, |_, _, _| (Rgb::BLACK, Rgb::BLACK));
-            return;
-        }
-
-        // Phase offset oscillates slowly for evolving Lissajous figures.
-        let phase_offset = (self.frame % 512) as usize;
-        let mut prev: Option<(i32, i32)> = None;
-        for i in 0..samples.len() {
-            let x_sample = samples[i];
-            let y_sample = samples[(i + phase_offset) % samples.len()];
-
-            // Map [-1, 1] to sub-pixel coords with a small margin.
-            let px = ((x_sample + 1.0) * 0.5 * (sub_w - 1.0))
-                .round()
-                .clamp(0.0, sub_w - 1.0) as i32;
-            let py = ((y_sample + 1.0) * 0.5 * (sub_h - 1.0))
-                .round()
-                .clamp(0.0, sub_h - 1.0) as i32;
-
-            if let Some((ppx, ppy)) = prev {
-                self.braille.line(ppx, ppy, px, py);
-            }
-            prev = Some((px, py));
-        }
-
         // Phosphor-green CRT colour, brightness modulated by energy.
         let base = 0.35_f32;
         let brightness = (base + energy * 0.65).min(1.0);
+        let gutter = Rgb::new(0, 4, 0);
 
-        self.braille.compose(grid, |_cx, _cy, dot_count| {
+        if samples.len() >= 2 {
+            // Phase offset oscillates slowly for evolving Lissajous figures.
+            let phase_offset = (self.frame % 512) as usize;
+            let mut prev: Option<(i32, i32)> = None;
+            for i in 0..samples.len() {
+                let x_sample = samples[i];
+                let y_sample = samples[(i + phase_offset) % samples.len()];
+
+                let px = (x_margin + (x_sample + 1.0) * 0.5 * (sub_w - 1.0))
+                    .round()
+                    .clamp(0.0, buf_w - 1.0) as i32;
+                let py = (y_margin + (y_sample + 1.0) * 0.5 * (sub_h - 1.0))
+                    .round()
+                    .clamp(0.0, buf_h - 1.0) as i32;
+
+                if let Some((ppx, ppy)) = prev {
+                    self.braille.line(ppx, ppy, px, py);
+                }
+                prev = Some((px, py));
+            }
+        }
+
+        let x_lo = x_gutter_cells;
+        let x_hi = w.saturating_sub(x_gutter_cells);
+        let y_lo = y_gutter_cells;
+        let y_hi = h.saturating_sub(y_gutter_cells);
+
+        self.braille.compose(grid, |cx, cy, dot_count| {
+            let in_frame = cx >= x_lo && cx < x_hi && cy >= y_lo && cy < y_hi;
             if dot_count > 0 {
                 let peak_boost = (dot_count as f32 / 8.0).min(1.0);
                 let green_val = brightness * (0.6 + 0.4 * peak_boost);
                 let fg = Rgb::new(0, f32_to_u8(green_val), 0);
-                (fg, Rgb::BLACK)
-            } else {
+                let bg = if in_frame { Rgb::BLACK } else { gutter };
+                (fg, bg)
+            } else if in_frame {
                 (Rgb::BLACK, Rgb::BLACK)
+            } else {
+                (gutter, gutter)
             }
         });
     }
@@ -178,6 +196,39 @@ mod tests {
             diff > 0,
             "different frame counts should produce different output"
         );
+    }
+
+    #[test]
+    fn letterboxed_gutter_is_tinted() {
+        // Scope's Lissajous is intrinsically square; on a wide pane the
+        // left/right gutters must be painted with a muted phosphor tint,
+        // never pure black.
+        let mut scope = Scope::new();
+        let samples: Vec<f32> = (0..1024).map(|i| (i as f32 * 0.03).sin() * 0.6).collect();
+        let fft = fft_with_samples(samples);
+        let mut grid = CellGrid::new(120, 40);
+        {
+            let mut ctx = TuiContext { grid: &mut grid };
+            scope.render_tui(&mut ctx, &fft);
+        }
+
+        let edge_rows = [0u16, 39];
+        let edge_cols = [0u16, 119];
+
+        for row in edge_rows {
+            let any_tinted = (0..120u16).any(|x| {
+                let cell = grid.cells()[(row as usize) * 120 + x as usize];
+                cell.bg != Rgb::BLACK || cell.fg != Rgb::BLACK
+            });
+            assert!(any_tinted, "row {row} must have palette-tinted cells");
+        }
+        for col in edge_cols {
+            let any_tinted = (0..40u16).any(|y| {
+                let cell = grid.cells()[(y as usize) * 120 + col as usize];
+                cell.bg != Rgb::BLACK || cell.fg != Rgb::BLACK
+            });
+            assert!(any_tinted, "col {col} must have palette-tinted cells");
+        }
     }
 
     #[test]

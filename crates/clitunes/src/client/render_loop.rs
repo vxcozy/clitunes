@@ -877,11 +877,15 @@ fn visualiser_cell_rect() -> (u16, u16) {
 /// Paint the `:` command bar at the bottom row. Overwrites whatever the
 /// now-playing strip or status hint put there. Format:
 ///
-///     : <buffer>│  <right-side hint>
+/// ```text
+/// : <buffer>|  <right-side hint>
+/// ```
 ///
-/// The right-side hint shows `(no match)`, a disambiguation list, a
-/// dimmed `submitting...` while awaiting ack, or the last error message.
-/// Truncates inline hints that won't fit rather than flooding the row.
+/// Cursor glyph is actually `│` (U+2502) — shown as `|` above so rustdoc
+/// doesn't try to parse this block as Rust. The right-side hint shows
+/// `(no match)`, a disambiguation list, a dimmed `submitting...` while
+/// awaiting ack, or the last error message. Truncates inline hints that
+/// won't fit rather than flooding the row.
 fn paint_command_bar(grid: &mut CellGrid, bar: &CommandBarState, theme: &Theme) {
     let width = grid.width();
     let height = grid.height();
@@ -998,8 +1002,7 @@ fn paint_command_bar(grid: &mut CellGrid, bar: &CommandBarState, theme: &Theme) 
         } else {
             (x + 1).min(width.saturating_sub(1))
         };
-        let mut hx = start_x;
-        for ch in hint_chars {
+        for (hx, ch) in (start_x..).zip(hint_chars) {
             if hx >= width {
                 break;
             }
@@ -1012,7 +1015,6 @@ fn paint_command_bar(grid: &mut CellGrid, bar: &CommandBarState, theme: &Theme) 
                     bg,
                 },
             );
-            hx += 1;
         }
     }
 }

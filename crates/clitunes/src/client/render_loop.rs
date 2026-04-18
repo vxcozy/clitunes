@@ -16,7 +16,7 @@ use clitunes_engine::tui::components::now_playing::{render_now_playing, NowPlayi
 use clitunes_engine::tui::micro::{BreathingAnimation, ErrorPulse, QuitFade, VolumeOverlay};
 use clitunes_engine::tui::picker::{
     key_from_bytes, load_curated, paint_picker, CuratedList, CuratedLoadOutcome, PickerAction,
-    PickerKey, PickerState, PickerTab, PickerTransition,
+    PickerKey, PickerState, PickerTab, PickerTransition, SettingsAuthStatus, SettingsSnapshot,
 };
 use clitunes_engine::tui::theme::{Theme, Token};
 
@@ -313,6 +313,30 @@ impl AppState {
                 self.picker_state
                     .set_library_items(LibraryCategory::Playlists, items.clone());
             }
+            Event::ConfigSnapshot {
+                device_name,
+                connect_enabled,
+                config_path,
+                credentials_path,
+                auth_status,
+                auth_detail,
+            } => {
+                use clitunes_engine::proto::events::AuthStatusKind;
+                let status = match auth_status {
+                    AuthStatusKind::LoggedIn => SettingsAuthStatus::LoggedIn,
+                    AuthStatusKind::LoggedOut => SettingsAuthStatus::LoggedOut,
+                    AuthStatusKind::ScopesInsufficient => SettingsAuthStatus::ScopesInsufficient,
+                    AuthStatusKind::Unreadable => SettingsAuthStatus::Unreadable,
+                };
+                self.picker_state.set_settings(SettingsSnapshot {
+                    device_name: device_name.clone(),
+                    connect_enabled: *connect_enabled,
+                    config_path: config_path.clone(),
+                    credentials_path: credentials_path.clone(),
+                    auth_status: status,
+                    auth_detail: auth_detail.clone(),
+                });
+            }
             _ => {}
         }
     }
@@ -459,6 +483,15 @@ impl AppState {
                                 error = %e,
                                 %id,
                                 "picker: failed to send browse_playlist verb"
+                            );
+                        }
+                    }
+                    PickerAction::ReadConfig => {
+                        if let Err(e) = verb_tx.try_send(Verb::ReadConfig) {
+                            tracing::error!(
+                                target: "clitunes",
+                                error = %e,
+                                "picker: failed to send read_config verb"
                             );
                         }
                     }

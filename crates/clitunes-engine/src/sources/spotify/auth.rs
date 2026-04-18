@@ -340,6 +340,42 @@ fn scopes_sufficient(granted: &[String]) -> bool {
         .all(|required| granted.iter().any(|g| g == required))
 }
 
+/// Snapshot of on-disk auth state for display surfaces. Computed by
+/// inspecting the credential file without touching the network —
+/// callers that want a live session should use [`load_credentials`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AuthStatus {
+    /// No credential file on disk. `clitunes auth` has never succeeded.
+    LoggedOut,
+    /// Credential file present but unreadable (I/O error, corrupt JSON,
+    /// or parse failure). Stores a short human-readable reason.
+    Unreadable(String),
+    /// Credential file present but the granted scopes are missing one
+    /// or more entries in [`SPOTIFY_SCOPES`] — typically a pre-v1.2
+    /// credential file that needs re-auth for the expanded permissions.
+    ScopesInsufficient,
+    /// Credential file present with all required scopes. This is the
+    /// happy path: the daemon can refresh a token from this file.
+    LoggedIn,
+}
+
+/// Inspect the on-disk credential file at `path` and report its
+/// current state. Never opens the network; safe to call on the
+/// daemon's hot path (e.g. from a verb dispatcher).
+pub fn cached_auth_status(path: &Path) -> AuthStatus {
+    match load_cached(path) {
+        Ok(None) => AuthStatus::LoggedOut,
+        Ok(Some(creds)) => {
+            if scopes_sufficient(&creds.scopes) {
+                AuthStatus::LoggedIn
+            } else {
+                AuthStatus::ScopesInsufficient
+            }
+        }
+        Err(e) => AuthStatus::Unreadable(e.to_string()),
+    }
+}
+
 // ── Credential persistence ─────────────────────────────────────────
 
 /// Load credentials from `path`. Returns `Ok(None)` if the file doesn't

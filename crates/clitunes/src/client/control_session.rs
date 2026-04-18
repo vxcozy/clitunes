@@ -34,6 +34,9 @@ impl ControlSession {
             "errors".into(),
             "browse".into(),
             "connect".into(),
+            // Settings tab consumes `ConfigSnapshot` events echoed back
+            // in response to `Verb::ReadConfig`.
+            "config".into(),
         ];
         let client = ControlClient::connect(socket_path, "clitunes-tui", subscriptions).await?;
         Ok(Self { client })

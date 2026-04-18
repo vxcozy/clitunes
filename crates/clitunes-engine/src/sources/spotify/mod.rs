@@ -14,7 +14,10 @@ pub mod connect;
 pub mod handle;
 pub mod sink;
 
-pub use auth::{default_credentials_path, load_credentials, load_or_authenticate, AuthResult};
+pub use auth::{
+    cached_auth_status, default_credentials_path, load_credentials, load_or_authenticate,
+    AuthResult, AuthStatus,
+};
 #[cfg(feature = "connect")]
 pub use connect::{ConnectRuntime, ConnectSinkSlot, ConnectSource};
 pub use handle::{PlaybackGuard, SpotifyHandle};

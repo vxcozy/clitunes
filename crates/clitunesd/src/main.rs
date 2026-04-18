@@ -16,8 +16,9 @@ use std::time::Duration;
 use anyhow::{Context, Result};
 use clitunes_engine::daemon::event_loop::DaemonEventLoop;
 use clitunes_engine::daemon::{
-    acquire_at, default_log_path, runtime_dir, set_socket_umask, write_pidfile, AcquireOutcome,
-    DaemonConfig, DetachOutcome, IdleTimer, RotatingLog,
+    acquire_at, default_config_path, default_log_path, resolve_config_path, runtime_dir,
+    set_socket_umask, write_pidfile, AcquireOutcome, DaemonConfig, DetachOutcome, IdleTimer,
+    RotatingLog, CONFIG_PATH_ENV,
 };
 use tracing_subscriber::prelude::*;
 use tracing_subscriber::{fmt, EnvFilter};
@@ -79,7 +80,18 @@ fn run() -> Result<ExitCode> {
     );
 
     let config = DaemonConfig::load(None).context("load daemon config")?;
-    tracing::info!(target: "clitunesd", "daemon config loaded");
+    // Mirror the resolver `DaemonConfig::load` used so TUI clients can
+    // see the exact path the daemon read from via `Verb::ReadConfig`.
+    let resolved_config_path = resolve_config_path(
+        None,
+        std::env::var_os(CONFIG_PATH_ENV),
+        default_config_path(),
+    );
+    tracing::info!(
+        target: "clitunesd",
+        config_path = ?resolved_config_path.as_ref().map(|p| p.display().to_string()),
+        "daemon config loaded"
+    );
     #[cfg(not(feature = "connect"))]
     if config.connect.enabled {
         tracing::warn!(
@@ -121,8 +133,13 @@ fn run() -> Result<ExitCode> {
         .build()
         .context("build tokio runtime")?;
 
-    let event_loop =
-        DaemonEventLoop::new(socket_path, Arc::clone(&idle), Arc::clone(&stop), config);
+    let event_loop = DaemonEventLoop::with_config_path(
+        socket_path,
+        Arc::clone(&idle),
+        Arc::clone(&stop),
+        config,
+        resolved_config_path,
+    );
     let result = rt.block_on(event_loop.run());
 
     if let Err(e) = &result {

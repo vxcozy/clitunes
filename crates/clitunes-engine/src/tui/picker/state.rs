@@ -1,10 +1,13 @@
-//! Picker state machine — tabbed picker for Radio / Search / Library.
+//! Picker state machine — tabbed picker for Radio / Search / Library /
+//! Settings.
 //!
-//! The picker is a modal with three tabs:
+//! The picker is a modal with four tabs:
 //!
 //! - **Radio** — curated-station list (v1.0 behaviour preserved).
 //! - **Search** — free-text Spotify search with paginated track results.
 //! - **Library** — user's saved tracks, saved albums, playlists, recently played.
+//! - **Settings** — read-only snapshot of the daemon's Spotify / Connect
+//!   config + on-disk auth state. No write path in this slice.
 //!
 //! Like the v1.0 picker, this is a pure state machine: keystrokes in,
 //! [`PickerAction`]s out. The render loop owns all I/O (verb dispatch,
@@ -16,7 +19,9 @@
 //! The active tab owns keyboard focus. Up/Down move that tab's cursor,
 //! Enter confirms that tab's selection, printable characters append to
 //! the Search tab's query when it's focused. `Tab` cycles
-//! Radio → Search → Library → Radio.
+//! Radio → Search → Library → Settings → Radio. Number keys `1`..`4`
+//! jump directly to a tab (outside the Search tab, where they are
+//! printable).
 //!
 //! # Why this lives in the state machine
 //!
@@ -72,15 +77,20 @@ pub enum PickerTab {
     Radio,
     Search,
     Library,
+    /// Read-only Spotify / daemon config surface. No write path yet —
+    /// shows the auth state, device name, and the shell command the
+    /// user should run to log in.
+    Settings,
 }
 
 impl PickerTab {
-    /// Cycle Radio → Search → Library → Radio.
+    /// Cycle Radio → Search → Library → Settings → Radio.
     pub fn next(self) -> Self {
         match self {
             Self::Radio => Self::Search,
             Self::Search => Self::Library,
-            Self::Library => Self::Radio,
+            Self::Library => Self::Settings,
+            Self::Settings => Self::Radio,
         }
     }
 }
@@ -106,6 +116,9 @@ pub enum PickerAction {
     /// User drilled into a playlist. Caller should send
     /// `Verb::BrowsePlaylist` with this id/uri.
     BrowsePlaylist(String),
+    /// User opened or refreshed the Settings tab. Caller should send
+    /// `Verb::ReadConfig` so the daemon echoes a fresh snapshot.
+    ReadConfig,
     /// User pressed `s` or `esc`. Caller should hide the picker.
     Hide,
     /// User pressed `q`. Caller should shut clitunes down.
@@ -144,6 +157,30 @@ impl Default for LibraryView {
     }
 }
 
+/// On-disk auth status the Settings tab renders as a human label.
+/// Mirrors `AuthStatusKind` on the wire, but deliberately decoupled so
+/// the TUI state machine has no dependency on the proto module.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum SettingsAuthStatus {
+    LoggedIn,
+    LoggedOut,
+    ScopesInsufficient,
+    Unreadable,
+}
+
+/// Read-only snapshot of the daemon config the Settings tab displays.
+/// Populated from the `ConfigSnapshot` event the daemon sends back in
+/// response to `Verb::ReadConfig`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SettingsSnapshot {
+    pub device_name: String,
+    pub connect_enabled: bool,
+    pub config_path: Option<String>,
+    pub credentials_path: Option<String>,
+    pub auth_status: SettingsAuthStatus,
+    pub auth_detail: Option<String>,
+}
+
 /// Live picker state. Owned by the main binary; one instance per
 /// session. Pure data — mutated by [`PickerState::handle_key`] and
 /// by result-feed setters the render loop calls when events arrive.
@@ -163,6 +200,11 @@ pub struct PickerState {
 
     /// Library tab — either category chooser or item list.
     pub library: LibraryView,
+
+    /// Settings tab — last config snapshot the daemon sent. `None`
+    /// until the first `Verb::ReadConfig` round-trips; the paint code
+    /// renders a "loading" line in that case.
+    pub settings: Option<SettingsSnapshot>,
 
     /// Banner shown in the header when the user's last station has
     /// gone missing. `None` on the happy path.
@@ -186,6 +228,7 @@ impl PickerState {
             search_results: Vec::new(),
             search_cursor: 0,
             library: LibraryView::default(),
+            settings: None,
             banner: None,
             rapid_count: 0,
             last_nav_at: None,
@@ -227,6 +270,12 @@ impl PickerState {
         self.library = LibraryView::default();
     }
 
+    /// Store a fresh daemon config snapshot on the Settings tab. Called
+    /// by the render loop when a `ConfigSnapshot` event arrives.
+    pub fn set_settings(&mut self, snapshot: SettingsSnapshot) {
+        self.settings = Some(snapshot);
+    }
+
     /// Handle a key. Public entry point used by the render loop.
     pub fn handle_key(&mut self, key: PickerKey) -> PickerAction {
         self.handle_key_at(key, Instant::now())
@@ -248,6 +297,30 @@ impl PickerState {
             PickerKey::Quit => return PickerAction::Quit,
             PickerKey::Tab => {
                 self.active_tab = self.active_tab.next();
+                if matches!(self.active_tab, PickerTab::Settings) {
+                    return PickerAction::ReadConfig;
+                }
+                return PickerAction::Moved;
+            }
+            // Numeric keys switch tabs directly. Only active outside the
+            // Search input; inside Search these are printable characters
+            // routed via `Char(c)` below.
+            PickerKey::Char(c @ ('1' | '2' | '3' | '4'))
+                if !matches!(self.active_tab, PickerTab::Search) =>
+            {
+                let target = match c {
+                    '1' => PickerTab::Radio,
+                    '2' => PickerTab::Search,
+                    '3' => PickerTab::Library,
+                    '4' => PickerTab::Settings,
+                    _ => unreachable!(),
+                };
+                if self.active_tab != target {
+                    self.active_tab = target;
+                    if matches!(target, PickerTab::Settings) {
+                        return PickerAction::ReadConfig;
+                    }
+                }
                 return PickerAction::Moved;
             }
             PickerKey::ToggleVisibility => {
@@ -287,6 +360,17 @@ impl PickerState {
             PickerTab::Radio => self.handle_radio(key, now),
             PickerTab::Search => self.handle_search(key, now),
             PickerTab::Library => self.handle_library(key, now),
+            PickerTab::Settings => self.handle_settings(key),
+        }
+    }
+
+    /// Settings tab is read-only in this slice — the only useful key
+    /// is `Enter`, which re-requests the snapshot so users can see
+    /// auth state updates after running `clitunes auth` elsewhere.
+    fn handle_settings(&mut self, key: PickerKey) -> PickerAction {
+        match key {
+            PickerKey::Enter => PickerAction::ReadConfig,
+            _ => PickerAction::Ignored,
         }
     }
 
@@ -571,7 +655,7 @@ mod tests {
     }
 
     #[test]
-    fn tab_cycles_radio_search_library() {
+    fn tab_cycles_radio_search_library_settings() {
         let list = baked_list();
         let mut st = PickerState::new(&list, 0);
         assert_eq!(st.active_tab, PickerTab::Radio);
@@ -579,8 +663,67 @@ mod tests {
         assert_eq!(st.active_tab, PickerTab::Search);
         assert_eq!(st.handle_key(PickerKey::Tab), PickerAction::Moved);
         assert_eq!(st.active_tab, PickerTab::Library);
+        // Settings tab is special: entering it asks the caller to fetch
+        // a fresh config snapshot.
+        assert_eq!(st.handle_key(PickerKey::Tab), PickerAction::ReadConfig);
+        assert_eq!(st.active_tab, PickerTab::Settings);
         assert_eq!(st.handle_key(PickerKey::Tab), PickerAction::Moved);
         assert_eq!(st.active_tab, PickerTab::Radio);
+    }
+
+    #[test]
+    fn numeric_keys_switch_tabs_outside_search() {
+        let list = baked_list();
+        let mut st = PickerState::new(&list, 0);
+        assert_eq!(st.handle_key(PickerKey::Char('3')), PickerAction::Moved);
+        assert_eq!(st.active_tab, PickerTab::Library);
+        assert_eq!(
+            st.handle_key(PickerKey::Char('4')),
+            PickerAction::ReadConfig
+        );
+        assert_eq!(st.active_tab, PickerTab::Settings);
+        // Re-pressing the same number refreshes nothing and does not
+        // double-fire ReadConfig.
+        assert_eq!(st.handle_key(PickerKey::Char('4')), PickerAction::Moved);
+        assert_eq!(st.handle_key(PickerKey::Char('1')), PickerAction::Moved);
+        assert_eq!(st.active_tab, PickerTab::Radio);
+    }
+
+    #[test]
+    fn numeric_keys_on_search_tab_are_printable() {
+        let list = baked_list();
+        let mut st = PickerState::new(&list, 0);
+        st.handle_key(PickerKey::Tab); // Search
+        assert_eq!(
+            st.handle_key(PickerKey::Char('4')),
+            PickerAction::SearchDirty("4".into())
+        );
+        assert_eq!(st.active_tab, PickerTab::Search);
+    }
+
+    #[test]
+    fn settings_tab_enter_refreshes_snapshot() {
+        let list = baked_list();
+        let mut st = PickerState::new(&list, 0);
+        st.active_tab = PickerTab::Settings;
+        assert_eq!(st.handle_key(PickerKey::Enter), PickerAction::ReadConfig);
+    }
+
+    #[test]
+    fn set_settings_populates_snapshot() {
+        let list = baked_list();
+        let mut st = PickerState::new(&list, 0);
+        assert!(st.settings.is_none());
+        let snap = SettingsSnapshot {
+            device_name: "clitunes".into(),
+            connect_enabled: false,
+            config_path: Some("/tmp/daemon.toml".into()),
+            credentials_path: None,
+            auth_status: SettingsAuthStatus::LoggedOut,
+            auth_detail: None,
+        };
+        st.set_settings(snap.clone());
+        assert_eq!(st.settings.as_ref(), Some(&snap));
     }
 
     #[test]
@@ -730,9 +873,10 @@ mod tests {
         let mut st = PickerState::new(&list, 0);
         st.handle_key(PickerKey::Down);
         let r_sel = st.radio_selected;
-        st.handle_key(PickerKey::Tab);
+        st.handle_key(PickerKey::Tab); // Search
         st.handle_key(PickerKey::Char('h'));
         st.handle_key(PickerKey::Tab); // Library
+        st.handle_key(PickerKey::Tab); // Settings
         st.handle_key(PickerKey::Tab); // Radio
         assert_eq!(st.radio_selected, r_sel);
         st.handle_key(PickerKey::Tab); // Search

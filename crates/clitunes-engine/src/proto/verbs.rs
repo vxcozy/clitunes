@@ -59,6 +59,11 @@ pub enum Verb {
     /// visible. Idempotent: disconnecting when nothing is connected
     /// is a no-op with `ok: true`.
     ConnectDisconnect,
+    /// Fetch a read-only snapshot of the daemon's runtime config +
+    /// Spotify auth state. Used by the TUI picker's Settings tab.
+    /// The daemon replies with a `ConfigSnapshot` event before the
+    /// `CommandResult` ack.
+    ReadConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -235,6 +240,18 @@ mod tests {
         };
         let line = env.to_line();
         assert!(line.contains("saved_tracks"));
+        let parsed = VerbEnvelope::from_line(&line).unwrap();
+        assert_eq!(parsed, env);
+    }
+
+    #[test]
+    fn read_config_roundtrip() {
+        let env = VerbEnvelope {
+            cmd_id: "rc-1".into(),
+            verb: Verb::ReadConfig,
+        };
+        let line = env.to_line();
+        assert!(line.contains("read_config"));
         let parsed = VerbEnvelope::from_line(&line).unwrap();
         assert_eq!(parsed, env);
     }

@@ -689,9 +689,20 @@ impl RenderLoop {
             state.error_pulse.tick();
             state.breathing.tick();
 
-            // Command bar — drive its 250ms ack timeout, then paint if
-            // active. The bar always wins the bottom row (paints over
-            // the now-playing strip and any status hint).
+            // Bottom-row ownership. This block paints after the
+            // now-playing strip and the picker modal, so the visual
+            // priority ends up as:
+            //
+            //     command_bar (when active)
+            //   > status_hint (when no modal + no now-playing)
+            //   > now-playing strip (when track info present)
+            //   > picker modal (when visible)
+            //   > bare visualiser frame
+            //
+            // (The picker is a fullscreen modal, not a bottom-row fight,
+            // so "beats picker" here means the bar's row is drawn after
+            // the picker paint — the command bar overwrites that single
+            // row of picker chrome.)
             state.command_bar.tick(Instant::now());
             if state.command_bar.is_active() {
                 paint_command_bar(&mut state.grid, &state.command_bar, &state.theme);
@@ -699,9 +710,8 @@ impl RenderLoop {
                 && state.now_playing.artist.is_none()
                 && state.now_playing.title.is_none()
             {
-                // Discoverability hint. Only painted when nothing else
-                // wants the bottom row — picker hidden AND no
-                // now-playing strip yet. First-run affordance.
+                // First-run discoverability affordance — ghosts over
+                // whatever the visualiser painted in the bottom row.
                 paint_status_hint(&mut state.grid);
             }
 

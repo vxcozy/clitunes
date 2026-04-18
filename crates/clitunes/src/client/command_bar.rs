@@ -68,7 +68,6 @@ pub enum CommandBarAction {
 pub struct CommandBarState {
     active: bool,
     buffer: String,
-    cursor: usize, // byte index into buffer
     last_error: Option<String>,
     pending_submit: Option<PendingSubmit>,
     /// Visualiser catalogue the fuzzy matcher searches. Injected at
@@ -83,7 +82,6 @@ impl CommandBarState {
         Self {
             active: false,
             buffer: String::new(),
-            cursor: 0,
             last_error: None,
             pending_submit: None,
             catalogue,
@@ -98,8 +96,14 @@ impl CommandBarState {
         &self.buffer
     }
 
+    /// Cursor position in bytes, always at the end of `buffer`. v1.3 only
+    /// supports append-at-end editing; Left/Right arrow navigation is
+    /// explicitly out of scope per the plan, so there is no separate
+    /// cursor state to track. The paint code uses this to draw the cursor
+    /// glyph; it's stable API so future arrow-key support can change the
+    /// implementation without breaking callers.
     pub fn cursor(&self) -> usize {
-        self.cursor
+        self.buffer.len()
     }
 
     pub fn last_error(&self) -> Option<&str> {
@@ -116,7 +120,6 @@ impl CommandBarState {
     pub fn open(&mut self) {
         self.active = true;
         self.buffer.clear();
-        self.cursor = 0;
         self.last_error = None;
         self.pending_submit = None;
     }
@@ -136,7 +139,6 @@ impl CommandBarState {
             self.pending_submit = None;
             self.active = false;
             self.buffer.clear();
-            self.cursor = 0;
             self.last_error = None;
         }
     }
@@ -163,23 +165,15 @@ impl CommandBarState {
             }
             PickerKey::Enter => self.submit(now),
             PickerKey::Backspace => {
-                if self.cursor > 0 {
-                    // cursor is a byte index; walk back one char boundary.
-                    let prev = self.buffer[..self.cursor]
-                        .char_indices()
-                        .next_back()
-                        .map(|(i, _)| i)
-                        .unwrap_or(0);
-                    self.buffer.drain(prev..self.cursor);
-                    self.cursor = prev;
-                }
+                // v1.3 only supports append-at-end editing, so Backspace
+                // just drops the last char. `String::pop` is char-boundary
+                // safe — no risk of splitting a multi-byte UTF-8 codepoint.
+                self.buffer.pop();
                 self.last_error = None;
                 CommandBarAction::Still
             }
             PickerKey::Char(c) => {
-                let s = c.to_string();
-                self.buffer.insert_str(self.cursor, &s);
-                self.cursor += s.len();
+                self.buffer.push(c);
                 // User has started typing new intent — stale errors clear.
                 self.last_error = None;
                 CommandBarAction::Still
@@ -209,15 +203,12 @@ impl CommandBarState {
     fn cancel(&mut self) {
         self.active = false;
         self.buffer.clear();
-        self.cursor = 0;
         self.last_error = None;
         self.pending_submit = None;
     }
 
     fn insert_char(&mut self, c: char) {
-        let s = c.to_string();
-        self.buffer.insert_str(self.cursor, &s);
-        self.cursor += s.len();
+        self.buffer.push(c);
         self.last_error = None;
     }
 

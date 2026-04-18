@@ -7,25 +7,57 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-### Removed
+## [1.1.0] - 2026-04-18
 
-- **Four visualiser variants (`Auralis`, `Starfield`, `Tideline`, `Cascade`)
-  that were declared in the `VisualiserId` enum but never registered in
-  the TUI carousel.** These were early GPU-heavy designs superseded by
-  the pure-CPU rendering approach. The v1.0.0 CHANGELOG and README
-  advertised them as part of the "Spectrum / core" family, but the
-  active carousel only contained 23 reachable modes — the other four
-  were dead code behind a stable-looking name. Removing them closes
-  the gap between what ships and what the docs claim.
+### Added
+
+- **`:viz <name>` command bar in the full TUI.** Press `:` to open a
+  bottom-row overlay, type a visualiser name (partial / fuzzy match
+  OK — `:sak` jumps to Sakura, `:hrt` jumps to Heartbeat), hit Enter
+  to go there. Tied top matches show a disambiguation hint and wait
+  for the user to refine the query. Esc cancels, Backspace edits.
+  Submit waits up to 250 ms for the daemon's `VizChanged` ack;
+  surfaces "daemon not responding" on timeout.
+- **Discoverability hint.** When no modal is active and the now-
+  playing strip is empty (first-run), a dim bottom-row hint ghosts
+  over the visualiser showing `:jump  n/p cycle  s picker  q quit`.
+- **Pane-mode visualiser parity.** `clitunes --pane visualiser
+  --viz <name>` now accepts all 23 modes. Previously only 8 were
+  wired in pane mode — a pre-existing gap from PR #37 that silently
+  fell back to Plasma on unknown names.
+- **`rust-toolchain.toml`** pinning the project to rustc 1.95.0 so
+  local clippy fires the same lints CI does. Dev-only.
 
 ### Changed
 
-- **Default visualiser corrected to Plasma in all docs.** The code has
-  defaulted to Plasma (`active_idx = 0`) since v1.0.0, but the README and
-  tutorial materials said "Auralis (default)" — a pre-existing
-  documentation bug surfaced during v1.3 planning. README, CHANGELOG
-  (below), `guide/tutorials/getting-started.md`, `guide/how-to/embed-panes.md`,
+- **Default visualiser corrected to Plasma in all docs.** The code
+  has defaulted to Plasma (`active_idx = 0`) since v1.0.0, but the
+  README and tutorial materials said "Auralis (default)" — a pre-
+  existing documentation bug. README, CHANGELOG (below),
+  `guide/tutorials/getting-started.md`, `guide/how-to/embed-panes.md`,
   and `guide/explanation/visualisers.md` now all say Plasma.
+
+### Fixed
+
+- **`rustls-webpki` 0.103.11 → 0.103.12** closes two Low-severity
+  CVEs on the 0.103.x path (name-constraint matching for wildcard
+  names and URI names). The 0.102.8 path via librespot's
+  hyper-proxy2 remains on the older version pending an upstream
+  update — tracked separately.
+
+### Removed
+
+- **Four visualiser variants (`Auralis`, `Starfield`, `Tideline`,
+  `Cascade`) that were declared in the `VisualiserId` enum but
+  never registered in the TUI carousel.** These were early GPU-
+  heavy designs superseded by the pure-CPU rendering approach. The
+  v1.0.0 CHANGELOG and README advertised them as part of the
+  "Spectrum / core" family, but the active carousel only contained
+  23 reachable modes. `clitunes viz auralis` (or starfield /
+  tideline / cascade) now returns an unknown-visualiser error
+  instead of silently no-oping.
+
+[1.1.0]: https://github.com/vxcozy/clitunes/releases/tag/v1.1.0
 
 ## [1.0.0] - 2026-04-17
 

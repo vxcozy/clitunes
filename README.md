@@ -75,6 +75,7 @@ Pick a genre, and audio starts streaming with the default **Plasma** visualiser.
 | Key | Action |
 |-----|--------|
 | `n` / `p` | Next / previous visualiser |
+| `:` | Open command bar — type a visualiser name (fuzzy) and Enter to jump |
 | `Up` / `Down` (or `j` / `k`) | Move picker selection |
 | `Enter` | Confirm picker selection |
 | `s` | Show / hide station picker |

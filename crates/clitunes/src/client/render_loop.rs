@@ -869,9 +869,9 @@ fn classify_pending(pending: &[u8]) -> Option<AppKey> {
 
 fn visualiser_cell_rect() -> (u16, u16) {
     let (term_cols, term_rows) = terminal_size().unwrap_or((FALLBACK_COLS, FALLBACK_ROWS));
-    let cols = term_cols.saturating_sub(1).max(20);
-    let rows = term_rows.saturating_sub(2).max(10);
-    (cols, rows)
+    // Full pane, edge to edge. The AnsiWriter disables DECAWM during the
+    // session, so writing the bottom-right cell doesn't scroll.
+    (term_cols.max(20), term_rows.max(10))
 }
 
 /// Paint the `:` command bar at the bottom row. Overwrites whatever the

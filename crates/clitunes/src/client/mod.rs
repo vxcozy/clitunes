@@ -1,3 +1,4 @@
+pub mod command_bar;
 pub mod control_session;
 pub mod fuzzy;
 pub mod headless;

@@ -25,12 +25,18 @@ impl<W: Write> AnsiWriter<W> {
         Self { out }
     }
 
+    /// Enter frame mode: hide cursor and disable autowrap (DECAWM).
+    ///
+    /// Autowrap must be off so the bottom-right cell can be written without
+    /// triggering a scroll — which is what otherwise forces the renderer to
+    /// inset the grid by a column and a row.
     pub fn hide_cursor(&mut self) -> io::Result<()> {
-        self.out.write_all(b"\x1b[?25l")
+        self.out.write_all(b"\x1b[?25l\x1b[?7l")
     }
 
+    /// Exit frame mode: re-enable autowrap, then show the cursor.
     pub fn show_cursor(&mut self) -> io::Result<()> {
-        self.out.write_all(b"\x1b[?25h")
+        self.out.write_all(b"\x1b[?7h\x1b[?25h")
     }
 
     pub fn clear_screen(&mut self) -> io::Result<()> {
@@ -143,5 +149,28 @@ mod tests {
         let s = String::from_utf8(buf).unwrap();
         let sgr_count = s.matches("\x1b[38;2;").count();
         assert_eq!(sgr_count, 2, "distinct colours emit distinct SGR prefixes");
+    }
+
+    #[test]
+    fn hide_cursor_disables_autowrap() {
+        let mut buf: Vec<u8> = Vec::new();
+        let mut w = AnsiWriter::new(&mut buf);
+        w.hide_cursor().unwrap();
+        let s = std::str::from_utf8(&buf).unwrap();
+        assert!(s.contains("\x1b[?25l"), "hides cursor");
+        assert!(
+            s.contains("\x1b[?7l"),
+            "disables DECAWM so edge cells don't scroll"
+        );
+    }
+
+    #[test]
+    fn show_cursor_restores_autowrap() {
+        let mut buf: Vec<u8> = Vec::new();
+        let mut w = AnsiWriter::new(&mut buf);
+        w.show_cursor().unwrap();
+        let s = std::str::from_utf8(&buf).unwrap();
+        assert!(s.contains("\x1b[?7h"), "restores DECAWM");
+        assert!(s.contains("\x1b[?25h"), "shows cursor");
     }
 }

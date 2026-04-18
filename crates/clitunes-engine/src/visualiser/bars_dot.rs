@@ -150,13 +150,16 @@ impl Visualiser for BarsDot {
             }
         }
 
+        // Subtle warm gutter so empty air above the bars reads as a muted
+        // backdrop rather than a dead pane.
+        let gutter = Rgb::new(4, 2, 0);
         let grid_h = h;
         self.braille.compose(grid, |_cx, cy, dot_count| {
             if dot_count > 0 {
                 let fg = Self::color_for_row(cy, grid_h);
-                (fg, Rgb::BLACK)
+                (fg, gutter)
             } else {
-                (Rgb::BLACK, Rgb::BLACK)
+                (gutter, gutter)
             }
         });
     }
@@ -219,6 +222,37 @@ mod tests {
             diff > 0,
             "consecutive frames with different input should differ"
         );
+    }
+
+    #[test]
+    fn gutter_is_tinted_not_black() {
+        // Even when the bars are short, the air above them must carry a
+        // palette-consistent tint rather than raw black.
+        let mut viz = BarsDot::new();
+        let fft = FftSnapshot::new(vec![0.0; 128], 48_000, 256);
+        let mut grid = CellGrid::new(120, 40);
+        {
+            let mut ctx = TuiContext { grid: &mut grid };
+            viz.render_tui(&mut ctx, &fft);
+        }
+
+        let edge_rows = [0u16, 39];
+        let edge_cols = [0u16, 119];
+
+        for row in edge_rows {
+            let any_tinted = (0..120u16).any(|x| {
+                let cell = grid.cells()[(row as usize) * 120 + x as usize];
+                cell.bg != Rgb::BLACK || cell.fg != Rgb::BLACK
+            });
+            assert!(any_tinted, "row {row} must have palette-tinted cells");
+        }
+        for col in edge_cols {
+            let any_tinted = (0..40u16).any(|y| {
+                let cell = grid.cells()[(y as usize) * 120 + col as usize];
+                cell.bg != Rgb::BLACK || cell.fg != Rgb::BLACK
+            });
+            assert!(any_tinted, "col {col} must have palette-tinted cells");
+        }
     }
 
     #[test]

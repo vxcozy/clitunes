@@ -1,7 +1,11 @@
 # clitunes
 
-[![Release](https://img.shields.io/github/v/release/vxcozy/clitunes?sort=semver)](https://github.com/vxcozy/clitunes/releases/latest)
-[![CI](https://img.shields.io/github/actions/workflow/status/vxcozy/clitunes/ci.yml?branch=main&label=CI)](https://github.com/vxcozy/clitunes/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/vxcozy/clitunes?sort=semver&display_name=tag&color=blue)](https://github.com/vxcozy/clitunes/releases/latest)
+[![CI](https://github.com/vxcozy/clitunes/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/vxcozy/clitunes/actions/workflows/ci.yml)
+[![e2e](https://github.com/vxcozy/clitunes/actions/workflows/e2e.yml/badge.svg?branch=main)](https://github.com/vxcozy/clitunes/actions/workflows/e2e.yml)
+[![Platforms](https://img.shields.io/badge/platforms-macOS%20%7C%20Linux-lightgrey)](https://github.com/vxcozy/clitunes/releases/latest)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![Downloads](https://img.shields.io/github/downloads/vxcozy/clitunes/total?color=green)](https://github.com/vxcozy/clitunes/releases)
 
 A terminal music player with internet radio, Spotify, and real-time visualisers.
 

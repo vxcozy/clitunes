@@ -1,8 +1,9 @@
 //! Paint the tabbed picker overlay into a `CellGrid`.
 //!
-//! The picker is a centered modal box with three tabs — Radio, Search,
-//! Library — drawn in a single-line rounded frame with a tab bar,
-//! per-tab body, and footer. Only the active tab's body is painted.
+//! The picker is a centered modal box with four tabs — Radio, Search,
+//! Library, Settings — drawn in a single-line rounded frame with a
+//! tab bar, per-tab body, and footer. Only the active tab's body is
+//! painted.
 //!
 //! # Layout math
 //!
@@ -38,7 +39,9 @@ use clitunes_core::{BrowseItem, LibraryCategory};
 
 use crate::tui::components::panel::{draw_panel, PanelStyle};
 use crate::tui::picker::curated_seed::{CuratedList, CURATED_SLOT_COUNT};
-use crate::tui::picker::state::{LibraryView, PickerState, PickerTab, LIBRARY_CATEGORIES};
+use crate::tui::picker::state::{
+    LibraryView, PickerState, PickerTab, SettingsAuthStatus, SettingsSnapshot, LIBRARY_CATEGORIES,
+};
 use crate::tui::theme::{Theme, Token};
 use crate::visualiser::cell_grid::{Cell, CellGrid, Rgb};
 
@@ -48,10 +51,12 @@ const HEADER_PRIMARY: &str = "Pick a starting point.";
 const TAB_RADIO_LABEL: &str = "Radio";
 const TAB_SEARCH_LABEL: &str = "Search";
 const TAB_LIBRARY_LABEL: &str = "Library";
+const TAB_SETTINGS_LABEL: &str = "Settings";
 
-const FOOTER_RADIO: &str = "↑/↓ move   enter play   tab next tab   s hide   q quit";
-const FOOTER_SEARCH: &str = "type to search   ↑/↓ move   enter play   esc clear   tab next tab";
-const FOOTER_LIBRARY: &str = "↑/↓ move   enter open   esc back   tab next tab   q quit";
+const FOOTER_RADIO: &str = "1 radio  2 search  3 library  4 settings  esc close";
+const FOOTER_SEARCH: &str = "type to search   ↑/↓ move   enter play   esc clear";
+const FOOTER_LIBRARY: &str = "1 radio  2 search  3 library  4 settings  esc close";
+const FOOTER_SETTINGS: &str = "1 radio  2 search  3 library  4 settings  esc close";
 
 /// Minimum comfortable modal dimensions. See [`paint_picker`] for the
 /// fallback behavior when the grid is smaller.
@@ -215,6 +220,18 @@ pub fn paint_picker(
                 select_text,
                 select_row_bg,
             ),
+            PickerTab::Settings => paint_settings_body(
+                grid,
+                state.settings.as_ref(),
+                inner_x0,
+                inner_w,
+                body_y0,
+                body_rows,
+                body_fg,
+                body_dim_fg,
+                accent,
+                surface,
+            ),
         }
     }
 
@@ -223,6 +240,7 @@ pub fn paint_picker(
         PickerTab::Radio => FOOTER_RADIO,
         PickerTab::Search => FOOTER_SEARCH,
         PickerTab::Library => FOOTER_LIBRARY,
+        PickerTab::Settings => FOOTER_SETTINGS,
     };
     write_centered(
         grid,
@@ -255,9 +273,10 @@ fn paint_tab_bar(
         (PickerTab::Radio, TAB_RADIO_LABEL),
         (PickerTab::Search, TAB_SEARCH_LABEL),
         (PickerTab::Library, TAB_LIBRARY_LABEL),
+        (PickerTab::Settings, TAB_SETTINGS_LABEL),
     ];
     // Build per-segment strings, then center-pack them.
-    let spacer = "   ";
+    let spacer = "  ";
     let mut total: usize = 0;
     for (_, label) in &labels {
         total += 1 + label.chars().count(); // 1 for marker ▸ or space
@@ -511,6 +530,147 @@ fn paint_library_body(
                 }
             }
         }
+    }
+}
+
+/// Paint the read-only Settings tab. Shows:
+///
+/// - Spotify auth state (logged in / logged out / scopes / unreadable)
+/// - Connect device name + whether the receiver is enabled
+/// - Resolved daemon.toml path
+/// - The one shell command the user needs to authenticate
+///
+/// The tab intentionally owns no input: the picker emits
+/// `PickerAction::ReadConfig` when entering the tab and on Enter so
+/// the daemon echoes a fresh snapshot; everything else is rendered
+/// from that snapshot.
+#[allow(clippy::too_many_arguments)]
+fn paint_settings_body(
+    grid: &mut CellGrid,
+    snapshot: Option<&SettingsSnapshot>,
+    inner_x0: u16,
+    inner_w: u16,
+    body_y0: u16,
+    body_rows: u16,
+    body_fg: Rgb,
+    body_dim_fg: Rgb,
+    accent: Rgb,
+    surface: Rgb,
+) {
+    if body_rows == 0 {
+        return;
+    }
+    let Some(snap) = snapshot else {
+        write_centered(
+            grid,
+            inner_x0,
+            inner_w,
+            body_y0 + body_rows / 2,
+            "Loading daemon config…",
+            body_dim_fg,
+            surface,
+        );
+        return;
+    };
+
+    // Lay out as a stack of (label, value) rows. Truncation happens
+    // per-row via `truncate_or_pad` — we never overflow the modal
+    // horizontally because the outer `paint_picker` math already
+    // reserved `inner_w` for us.
+    let mut row: u16 = body_y0;
+    let rows_end = body_y0 + body_rows;
+
+    let write_kv = |grid: &mut CellGrid, row_y: u16, label: &str, value: &str, value_fg: Rgb| {
+        if row_y >= rows_end {
+            return;
+        }
+        // Reserve a 2-column left gutter so the rows don't kiss the
+        // panel border.
+        if inner_w < 6 {
+            return;
+        }
+        let label_cells = (inner_w as usize).min(14);
+        let label_out = truncate_or_pad(label, label_cells);
+        write_text(grid, inner_x0 + 1, row_y, &label_out, body_dim_fg, surface);
+        let value_x = inner_x0 + 1 + label_cells as u16;
+        let value_w = (inner_w as usize).saturating_sub(1 + label_cells);
+        if value_w == 0 {
+            return;
+        }
+        let value_out = truncate_or_pad(&safe_chars(value), value_w);
+        write_text(grid, value_x, row_y, &value_out, value_fg, surface);
+    };
+
+    // Row 1 — Spotify auth state. The user's most-asked question when
+    // opening Settings is "am I logged in?", so it gets the top slot.
+    let (status_text, status_fg) = match snap.auth_status {
+        SettingsAuthStatus::LoggedIn => ("Logged in".to_string(), accent),
+        SettingsAuthStatus::LoggedOut => ("Logged out".to_string(), body_fg),
+        SettingsAuthStatus::ScopesInsufficient => {
+            ("Needs re-auth (missing scopes)".to_string(), body_fg)
+        }
+        SettingsAuthStatus::Unreadable => {
+            let detail = snap
+                .auth_detail
+                .as_deref()
+                .map(|s| s.split(':').next().unwrap_or(s).trim())
+                .unwrap_or("credential file unreadable");
+            (format!("Error: {detail}"), body_fg)
+        }
+    };
+    write_kv(grid, row, "Spotify:", &status_text, status_fg);
+    row += 1;
+
+    // Row 2 — device name + enabled flag.
+    let device_line = if snap.connect_enabled {
+        format!("{} (Connect enabled)", snap.device_name)
+    } else {
+        format!("{} (Connect disabled)", snap.device_name)
+    };
+    write_kv(grid, row, "Device:", &device_line, body_fg);
+    row += 1;
+
+    // Row 3 — config path. Paths are long; truncate with an ellipsis.
+    let config_path = snap.config_path.as_deref().unwrap_or("(not resolved)");
+    write_kv(grid, row, "Config:", config_path, body_dim_fg);
+    row += 1;
+
+    // Row 4 — credentials path (only meaningful when not logged out).
+    if let Some(cred_path) = snap.credentials_path.as_deref() {
+        write_kv(grid, row, "Creds:", cred_path, body_dim_fg);
+        row += 1;
+    }
+
+    // Blank spacer, then the auth-instruction row.
+    row = row.saturating_add(1);
+    if row < rows_end {
+        let instruction = match snap.auth_status {
+            SettingsAuthStatus::LoggedIn => {
+                "Run `clitunes auth` again to refresh scopes or switch accounts."
+            }
+            SettingsAuthStatus::LoggedOut => "Run `clitunes auth` in another terminal to sign in.",
+            SettingsAuthStatus::ScopesInsufficient => {
+                "Run `clitunes auth` to grant the new scopes."
+            }
+            SettingsAuthStatus::Unreadable => {
+                "Remove the credential file and run `clitunes auth` to retry."
+            }
+        };
+        write_centered(grid, inner_x0, inner_w, row, instruction, body_fg, surface);
+        row = row.saturating_add(1);
+    }
+
+    // Edit-config hint — only meaningful when we know the path.
+    if row < rows_end && snap.config_path.is_some() {
+        write_centered(
+            grid,
+            inner_x0,
+            inner_w,
+            row,
+            "Edit daemon.toml to rename the device or enable Connect.",
+            body_dim_fg,
+            surface,
+        );
     }
 }
 
@@ -885,6 +1045,79 @@ mod tests {
         let row = format_track_row(&item, 40);
         assert!(row.contains("Roygbiv"));
         assert!(!row.contains(" — "));
+    }
+
+    fn sample_settings_snapshot(status: SettingsAuthStatus) -> SettingsSnapshot {
+        SettingsSnapshot {
+            device_name: "clitunes".into(),
+            connect_enabled: false,
+            config_path: Some("/home/u/.config/clitunes/daemon.toml".into()),
+            credentials_path: Some("/home/u/.config/clitunes/spotify/credentials.json".into()),
+            auth_status: status,
+            auth_detail: None,
+        }
+    }
+
+    #[test]
+    fn paint_picker_settings_tab_shows_logged_out_state() {
+        let mut grid = CellGrid::new(120, 40);
+        let list = baked_list();
+        let theme = default_theme();
+        let mut state = PickerState::new(&list, 0);
+        state.active_tab = PickerTab::Settings;
+        state.set_settings(sample_settings_snapshot(SettingsAuthStatus::LoggedOut));
+        let _rect = paint_picker(&mut grid, &list, &state, &theme).expect("rect");
+        let text: String = grid.cells().iter().map(|c| c.ch).collect();
+        assert!(text.contains("Logged out"), "missing auth status");
+        assert!(text.contains("clitunes"), "missing device name");
+        assert!(text.contains("daemon.toml"), "missing config path");
+        assert!(
+            text.contains("clitunes auth"),
+            "missing auth-trigger instruction"
+        );
+        // Footer should advertise the new keybinds.
+        assert!(text.contains("4 settings"), "footer missing 4 settings");
+    }
+
+    #[test]
+    fn paint_picker_settings_tab_shows_logged_in_state() {
+        let mut grid = CellGrid::new(120, 40);
+        let list = baked_list();
+        let theme = default_theme();
+        let mut state = PickerState::new(&list, 0);
+        state.active_tab = PickerTab::Settings;
+        state.set_settings(sample_settings_snapshot(SettingsAuthStatus::LoggedIn));
+        let _rect = paint_picker(&mut grid, &list, &state, &theme).expect("rect");
+        let text: String = grid.cells().iter().map(|c| c.ch).collect();
+        assert!(text.contains("Logged in"), "missing logged-in status");
+    }
+
+    #[test]
+    fn paint_picker_settings_tab_without_snapshot_shows_loading() {
+        let mut grid = CellGrid::new(120, 40);
+        let list = baked_list();
+        let theme = default_theme();
+        let mut state = PickerState::new(&list, 0);
+        state.active_tab = PickerTab::Settings;
+        let _rect = paint_picker(&mut grid, &list, &state, &theme).expect("rect");
+        let text: String = grid.cells().iter().map(|c| c.ch).collect();
+        assert!(
+            text.contains("Loading daemon config"),
+            "expected loading placeholder"
+        );
+    }
+
+    #[test]
+    fn paint_picker_tab_bar_shows_all_four_labels() {
+        let mut grid = CellGrid::new(120, 40);
+        let list = baked_list();
+        let theme = default_theme();
+        let state = PickerState::new(&list, 0);
+        let _rect = paint_picker(&mut grid, &list, &state, &theme).expect("rect");
+        let text: String = grid.cells().iter().map(|c| c.ch).collect();
+        for label in ["Radio", "Search", "Library", "Settings"] {
+            assert!(text.contains(label), "tab bar missing {label}");
+        }
     }
 
     #[test]

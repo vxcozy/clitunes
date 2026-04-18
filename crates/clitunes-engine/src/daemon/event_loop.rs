@@ -32,10 +32,12 @@ pub struct DaemonEventLoop {
     socket_path: std::path::PathBuf,
     idle: Arc<IdleTimer>,
     stop: Arc<AtomicBool>,
-    /// Daemon config; only the `connect` section is consumed today, so
-    /// builds without the `connect` feature will flag this as unread.
-    #[cfg_attr(not(feature = "connect"), allow(dead_code))]
+    /// Daemon config consumed by the Connect receiver and exposed to
+    /// clients via `Verb::ReadConfig`.
     config: DaemonConfig,
+    /// Resolved `daemon.toml` path the daemon loaded from, if any.
+    /// Surfaced to TUI clients so users can see where to edit config.
+    config_path: Option<std::path::PathBuf>,
 }
 
 impl DaemonEventLoop {
@@ -45,11 +47,26 @@ impl DaemonEventLoop {
         stop: Arc<AtomicBool>,
         config: DaemonConfig,
     ) -> Self {
+        Self::with_config_path(socket_path, idle, stop, config, None)
+    }
+
+    /// Same as [`Self::new`] but also records the resolved path of the
+    /// config file. Set by the `clitunesd` binary from the same resolver
+    /// `DaemonConfig::load` used, so `Verb::ReadConfig` can echo it back
+    /// to the TUI.
+    pub fn with_config_path(
+        socket_path: std::path::PathBuf,
+        idle: Arc<IdleTimer>,
+        stop: Arc<AtomicBool>,
+        config: DaemonConfig,
+        config_path: Option<std::path::PathBuf>,
+    ) -> Self {
         Self {
             socket_path,
             idle,
             stop,
             config,
+            config_path,
         }
     }
 
@@ -236,6 +253,8 @@ impl DaemonEventLoop {
         let verb_webapi = Arc::clone(&webapi_cache);
         #[cfg(feature = "connect")]
         let verb_disconnect_tx = connect_runtime.as_ref().map(|rt| rt.disconnect_sender());
+        let verb_config = self.config.clone();
+        let verb_config_path = self.config_path.clone();
         tokio::spawn(async move {
             dispatch_verbs(
                 &mut verb_rx,
@@ -248,6 +267,8 @@ impl DaemonEventLoop {
                 &verb_webapi,
                 #[cfg(feature = "connect")]
                 verb_disconnect_tx,
+                verb_config,
+                verb_config_path,
             )
             .await;
         });
@@ -528,6 +549,7 @@ fn build_spotify_source(
     SpotifySource::new(uri, handle, event_tx, format.sample_rate)
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn dispatch_verbs(
     verb_rx: &mut VerbReceiver,
     source_cmd_tx: &std::sync::mpsc::Sender<SourceCommand>,
@@ -537,6 +559,8 @@ async fn dispatch_verbs(
     last_state: &Arc<Mutex<Option<Event>>>,
     #[cfg(feature = "webapi")] webapi_cache: &Arc<WebApiCache>,
     #[cfg(feature = "connect")] connect_disconnect_tx: Option<mpsc::UnboundedSender<()>>,
+    config: DaemonConfig,
+    config_path: Option<std::path::PathBuf>,
 ) {
     while let Some((envelope, reply_tx)) = verb_rx.recv().await {
         if stop.load(Ordering::Relaxed) {
@@ -719,7 +743,53 @@ async fn dispatch_verbs(
                     "Spotify Connect not enabled in this build",
                 ));
             }
+            Verb::ReadConfig => {
+                let snapshot = build_config_snapshot(&config, config_path.as_deref());
+                // The event stream is the single source of truth — the
+                // reply channel is only for the ack, so we push the
+                // snapshot into the broadcast first, then ack.
+                let _ = event_tx.send(snapshot).await;
+                let _ = reply_tx.try_send(Event::command_ok(cmd_id));
+            }
         }
+    }
+}
+
+/// Build the `ConfigSnapshot` event the daemon sends in reply to
+/// `Verb::ReadConfig`. Inspects the Spotify credential cache at its
+/// default location so users see the same auth state the daemon itself
+/// would see on its next source switch.
+fn build_config_snapshot(config: &DaemonConfig, config_path: Option<&std::path::Path>) -> Event {
+    use crate::proto::events::AuthStatusKind;
+
+    #[cfg(feature = "spotify")]
+    let (credentials_path, auth_status, auth_detail) = {
+        use crate::sources::spotify::{cached_auth_status, default_credentials_path, AuthStatus};
+        match default_credentials_path() {
+            Some(path) => {
+                let status = cached_auth_status(&path);
+                let (kind, detail) = match status {
+                    AuthStatus::LoggedIn => (AuthStatusKind::LoggedIn, None),
+                    AuthStatus::LoggedOut => (AuthStatusKind::LoggedOut, None),
+                    AuthStatus::ScopesInsufficient => (AuthStatusKind::ScopesInsufficient, None),
+                    AuthStatus::Unreadable(reason) => (AuthStatusKind::Unreadable, Some(reason)),
+                };
+                (Some(path.to_string_lossy().into_owned()), kind, detail)
+            }
+            None => (None, AuthStatusKind::LoggedOut, None),
+        }
+    };
+    #[cfg(not(feature = "spotify"))]
+    let (credentials_path, auth_status, auth_detail) =
+        (None::<String>, AuthStatusKind::LoggedOut, None::<String>);
+
+    Event::ConfigSnapshot {
+        device_name: config.connect.name.clone(),
+        connect_enabled: config.connect.enabled,
+        config_path: config_path.map(|p| p.to_string_lossy().into_owned()),
+        credentials_path,
+        auth_status,
+        auth_detail,
     }
 }
 

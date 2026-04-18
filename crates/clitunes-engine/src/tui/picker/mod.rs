@@ -37,7 +37,7 @@ pub use curated_seed::{load_curated, CuratedList, CuratedLoadOutcome, CURATED_SL
 pub use paint::{paint_picker, Rect};
 pub use state::{
     key_from_bytes, LibraryView, PickerAction, PickerKey, PickerState, PickerTab,
-    LIBRARY_CATEGORIES,
+    SettingsAuthStatus, SettingsSnapshot, LIBRARY_CATEGORIES,
 };
 
 use crate::tui::transition::easing;

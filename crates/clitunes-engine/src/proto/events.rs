@@ -93,6 +93,47 @@ pub enum Event {
     /// the Connect source until either a new credential arrives or a
     /// local `SourceCommand::Play*` interrupts.
     ConnectDeviceDisconnected,
+    /// Read-only snapshot of the daemon's Spotify / Connect config plus
+    /// the on-disk auth state. Emitted in response to `Verb::ReadConfig`
+    /// so the TUI Settings tab can render without poking at the
+    /// filesystem itself.
+    ConfigSnapshot {
+        /// Device name shown in Spotify Connect pickers (from
+        /// `[connect] name` in `daemon.toml`).
+        device_name: String,
+        /// Whether the Connect receiver is enabled in config. `false`
+        /// is the out-of-the-box default.
+        connect_enabled: bool,
+        /// Absolute resolved path of the `daemon.toml` the running
+        /// daemon loaded from. `None` when no config directory could be
+        /// resolved on the host (extremely rare).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        config_path: Option<String>,
+        /// Absolute path of the Spotify credential cache that
+        /// `clitunes auth` writes to.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        credentials_path: Option<String>,
+        /// Wire-form auth status: `logged_in`, `logged_out`,
+        /// `scopes_insufficient`, or `unreadable`.
+        auth_status: AuthStatusKind,
+        /// Extra detail when `auth_status == unreadable`; never
+        /// populated otherwise.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        auth_detail: Option<String>,
+    },
+}
+
+/// Serializable mirror of
+/// [`sources::spotify::AuthStatus`](crate::sources::spotify::AuthStatus),
+/// flattened to a simple string-tagged enum so clients on older
+/// protocol versions can still decode the event.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum AuthStatusKind {
+    LoggedIn,
+    LoggedOut,
+    ScopesInsufficient,
+    Unreadable,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -189,6 +230,7 @@ impl Event {
             Self::PlaylistResults { .. } => "browse",
             Self::ConnectDeviceConnected { .. } => "connect",
             Self::ConnectDeviceDisconnected => "connect",
+            Self::ConfigSnapshot { .. } => "config",
         }
     }
 }
@@ -390,6 +432,43 @@ mod tests {
         let parsed = Event::from_line(&line).unwrap();
         assert_eq!(parsed, event);
         assert_eq!(event.topic(), "connect");
+    }
+
+    #[test]
+    fn config_snapshot_roundtrip() {
+        let event = Event::ConfigSnapshot {
+            device_name: "clitunes".into(),
+            connect_enabled: false,
+            config_path: Some("/home/u/.config/clitunes/daemon.toml".into()),
+            credentials_path: Some("/home/u/.config/clitunes/spotify/credentials.json".into()),
+            auth_status: AuthStatusKind::LoggedIn,
+            auth_detail: None,
+        };
+        let line = event.to_line();
+        assert!(line.contains("config_snapshot"));
+        assert!(line.contains("logged_in"));
+        // auth_detail should be omitted when None.
+        assert!(!line.contains("auth_detail"));
+        let parsed = Event::from_line(&line).unwrap();
+        assert_eq!(parsed, event);
+        assert_eq!(event.topic(), "config");
+    }
+
+    #[test]
+    fn config_snapshot_unreadable_roundtrip() {
+        let event = Event::ConfigSnapshot {
+            device_name: "Living Room".into(),
+            connect_enabled: true,
+            config_path: None,
+            credentials_path: None,
+            auth_status: AuthStatusKind::Unreadable,
+            auth_detail: Some("parsing Spotify credentials at …: EOF".into()),
+        };
+        let line = event.to_line();
+        assert!(line.contains("unreadable"));
+        assert!(line.contains("auth_detail"));
+        let parsed = Event::from_line(&line).unwrap();
+        assert_eq!(parsed, event);
     }
 
     #[test]

@@ -205,6 +205,50 @@ mod tests {
         );
     }
 
+    /// End-to-end signal-path regression: a known-amplitude sinusoid fed
+    /// into `snapshot_from` must preserve enough amplitude in the windowed
+    /// output that visualisers see motion, and the FFT magnitude must peak
+    /// at the input frequency's bin. This is the invariant the slice-3
+    /// instrumentation is proving out on the Spotify path — if the FFT tap
+    /// itself started dropping signal, this would catch it before
+    /// diagnostic traces ever fire.
+    #[test]
+    fn snapshot_from_preserves_sine_amplitude_and_peaks_at_frequency() {
+        let mut tap = FftTap::new(2048);
+        let sr = 48_000_f32;
+        let freq = 1_000.0_f32;
+        let amp = 0.6_f32;
+        let frames: Vec<_> = (0..2048)
+            .map(|i| {
+                let s = (std::f32::consts::TAU * freq * i as f32 / sr).sin() * amp;
+                StereoFrame { l: s, r: s }
+            })
+            .collect();
+        let snap = tap.snapshot_from(&frames, sr as u32);
+
+        // Peak |sample| in the windowed FFT input. Hann window peaks at
+        // 1.0 at the centre, so the windowed peak ≈ amp. A 5% tolerance
+        // covers sampling-grid offset (we won't hit exactly i = N/2).
+        let peak = snap.samples.iter().fold(0.0_f32, |acc, s| acc.max(s.abs()));
+        assert!(
+            (peak - amp).abs() < 0.05,
+            "windowed peak sample should track input amplitude, got {peak} (expected ~{amp})"
+        );
+
+        // Dominant magnitude bin must correspond to the input frequency.
+        let (peak_bin, _) = snap
+            .magnitudes
+            .iter()
+            .enumerate()
+            .max_by(|a, b| a.1.partial_cmp(b.1).unwrap())
+            .unwrap();
+        let peak_freq = peak_bin as f32 * sr / snap.fft_size as f32;
+        assert!(
+            (peak_freq - freq).abs() < 50.0,
+            "peak bin {peak_bin} maps to {peak_freq} Hz, expected ~{freq} Hz"
+        );
+    }
+
     #[test]
     fn new_constructor_defaults_empty_samples() {
         let snap = FftSnapshot::new(vec![1.0, 2.0], 44_100, 4);

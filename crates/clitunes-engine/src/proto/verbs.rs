@@ -64,6 +64,12 @@ pub enum Verb {
     /// The daemon replies with a `ConfigSnapshot` event before the
     /// `CommandResult` ack.
     ReadConfig,
+    /// Kick off the Spotify OAuth PKCE flow from the daemon so a
+    /// single-pane TUI user doesn't have to leave for a second shell.
+    /// Idempotent: re-issuing while a flow is already pending is a
+    /// no-op. The daemon emits `AuthStarted` / `AuthCompleted` /
+    /// `AuthFailed` events as the flow progresses.
+    StartAuth,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -252,6 +258,18 @@ mod tests {
         };
         let line = env.to_line();
         assert!(line.contains("read_config"));
+        let parsed = VerbEnvelope::from_line(&line).unwrap();
+        assert_eq!(parsed, env);
+    }
+
+    #[test]
+    fn start_auth_roundtrip() {
+        let env = VerbEnvelope {
+            cmd_id: "sa-1".into(),
+            verb: Verb::StartAuth,
+        };
+        let line = env.to_line();
+        assert!(line.contains("start_auth"));
         let parsed = VerbEnvelope::from_line(&line).unwrap();
         assert_eq!(parsed, env);
     }

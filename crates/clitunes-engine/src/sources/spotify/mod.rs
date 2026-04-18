@@ -15,8 +15,8 @@ pub mod handle;
 pub mod sink;
 
 pub use auth::{
-    cached_auth_status, default_credentials_path, load_credentials, load_or_authenticate,
-    AuthResult, AuthStatus,
+    authenticate_from_daemon, cached_auth_status, default_credentials_path, load_credentials,
+    load_or_authenticate, AuthResult, AuthStatus,
 };
 #[cfg(feature = "connect")]
 pub use connect::{ConnectRuntime, ConnectSinkSlot, ConnectSource};

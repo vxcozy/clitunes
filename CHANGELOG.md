@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.1.0-rc1] - 2026-04-18
+
+Release-candidate pre-release. **Do not use.**
+
+This tag exists solely to re-exercise `.github/workflows/release.yml`
+after two v1.1.0 tag cuts failed their cross-compile step (rustup
+target mismatch caused by the `rust-toolchain.toml` pin). The
+corresponding GitHub release will be deleted once verified. The
+v1.1.0 tag is the authoritative public release.
+
 ## [1.1.0] - 2026-04-18
 
 ### Added

@@ -1,4 +1,5 @@
 pub mod control_session;
+pub mod fuzzy;
 pub mod headless;
 pub mod pane_mode;
 pub mod reconnect;

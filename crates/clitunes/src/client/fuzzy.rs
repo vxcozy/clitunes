@@ -38,7 +38,8 @@ pub fn fuzzy_match(query: &str, candidates: &[&'static str]) -> Vec<(&'static st
         })
         .collect();
     // Stable sort preserves registration order on score ties.
-    out.sort_by(|a, b| b.1.cmp(&a.1));
+    // (Vec::sort_by_key is documented as stable — same guarantee as sort_by.)
+    out.sort_by_key(|(_, score)| std::cmp::Reverse(*score));
     out
 }
 

@@ -29,7 +29,9 @@ pub struct Sakura {
 impl Sakura {
     pub fn new() -> Self {
         Self {
-            energy: EnergyTracker::new(0.4, 0.88, 500.0),
+            // Release tau ~115 ms so petal emission breathes with the
+            // beat instead of trailing a quarter-second of loudness.
+            energy: EnergyTracker::new(0.4, 0.75, 500.0),
             braille: BrailleBuffer::new(1, 1),
             petals: Vec::new(),
             frame: 0,

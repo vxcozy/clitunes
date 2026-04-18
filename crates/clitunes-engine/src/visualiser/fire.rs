@@ -54,7 +54,9 @@ impl Fire {
         Self {
             start: Instant::now(),
             ramp: DensityRamp::new(" .·:;+=xX#%@"),
-            energy: EnergyTracker::new(0.5, 0.88, 500.0),
+            // Release tau ~115 ms so heat injection pulses with the beat
+            // rather than averaging the last quarter second of loudness.
+            energy: EnergyTracker::new(0.5, 0.75, 500.0),
             heat: Vec::new(),
             last_w: 0,
             last_h: 0,

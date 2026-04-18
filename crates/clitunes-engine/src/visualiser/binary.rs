@@ -23,7 +23,9 @@ pub struct Binary {
 impl Binary {
     pub fn new() -> Self {
         Self {
-            energy: EnergyTracker::new(0.5, 0.88, 500.0),
+            // Release tau ~115 ms so the bit field reshuffles with
+            // phrase dynamics, not half a second behind them.
+            energy: EnergyTracker::new(0.5, 0.75, 500.0),
             scroll_offsets: Vec::new(),
             last_w: 0,
         }

@@ -20,7 +20,9 @@ impl Wave {
     pub fn new() -> Self {
         Self {
             braille: BrailleBuffer::new(1, 1),
-            energy: EnergyTracker::new(0.5, 0.88, 500.0),
+            // Release tau ~115 ms: trace brightness dims between transients
+            // instead of glowing at near-peak through quiet sections.
+            energy: EnergyTracker::new(0.5, 0.75, 500.0),
         }
     }
 

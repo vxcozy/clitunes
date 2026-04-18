@@ -21,7 +21,9 @@ impl Scope {
     pub fn new() -> Self {
         Self {
             braille: BrailleBuffer::new(1, 1),
-            energy: EnergyTracker::new(0.5, 0.88, 500.0),
+            // Phosphor brightness responds to the beat within ~100 ms
+            // instead of carrying loudness forward by a quarter second.
+            energy: EnergyTracker::new(0.5, 0.75, 500.0),
             frame: 0,
         }
     }

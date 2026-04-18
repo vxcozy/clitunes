@@ -30,7 +30,9 @@ pub struct Rain {
 impl Rain {
     pub fn new() -> Self {
         Self {
-            energy: EnergyTracker::new(0.5, 0.88, 500.0),
+            // Release tau ~115 ms: spawn-probability tracks the beat
+            // rather than averaging the last quarter-second of audio.
+            energy: EnergyTracker::new(0.5, 0.75, 500.0),
             columns: Vec::new(),
             last_w: 0,
             last_h: 0,

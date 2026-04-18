@@ -17,7 +17,9 @@ pub struct Retro {
 impl Retro {
     pub fn new() -> Self {
         Self {
-            energy: EnergyTracker::new(0.5, 0.88, 500.0),
+            // Release tau ~115 ms so the sun radius pulses with the music
+            // rather than gliding smoothly like a second-long envelope.
+            energy: EnergyTracker::new(0.5, 0.75, 500.0),
             braille: BrailleBuffer::new(1, 1),
             frame: 0,
             last_w: 0,

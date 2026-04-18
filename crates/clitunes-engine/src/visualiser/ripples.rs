@@ -58,7 +58,9 @@ impl Ripples {
             next_ambient: 0.0,
             rng_state: 0xDEAD_BEEF,
             ramp: DensityRamp::new(" .·∙•○◎◉●◐◑◒◓◔◕"),
-            energy: EnergyTracker::new(0.5, 0.88, 600.0),
+            // Release tau ~115 ms so drop-spawn gating reacts to the
+            // current beat rather than the last quarter-second average.
+            energy: EnergyTracker::new(0.5, 0.75, 600.0),
             energy_cooldown: 0.0,
         }
     }

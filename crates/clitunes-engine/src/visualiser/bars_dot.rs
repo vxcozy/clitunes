@@ -23,7 +23,8 @@ pub struct BarsDot {
 impl BarsDot {
     pub fn new() -> Self {
         Self {
-            energy: EnergyTracker::new(0.5, 0.88, 500.0),
+            // Release tau ~115 ms so overlay brightness tracks the beat.
+            energy: EnergyTracker::new(0.5, 0.75, 500.0),
             scaler: SpectrumScaler::new(),
             braille: BrailleBuffer::new(1, 1),
             bar_heights: Vec::new(),

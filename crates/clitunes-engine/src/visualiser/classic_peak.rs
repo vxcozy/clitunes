@@ -4,6 +4,7 @@ use crate::audio::FftSnapshot;
 use crate::visualiser::cell_grid::{Cell, CellGrid, Rgb};
 use crate::visualiser::energy::EnergyTracker;
 use crate::visualiser::palette::{f32_to_u8, hsv_classic};
+use crate::visualiser::scaling::SpectrumScaler;
 use crate::visualiser::{SurfaceKind, TuiContext, Visualiser, VisualiserId};
 
 const GRAVITY: f32 = 0.003;
@@ -18,6 +19,7 @@ const PEAK_COLOR: Rgb = Rgb {
 
 pub struct ClassicPeak {
     energy: EnergyTracker,
+    scaler: SpectrumScaler,
     bar_heights: Vec<f32>,
     peak_heights: Vec<f32>,
     peak_velocities: Vec<f32>,
@@ -28,6 +30,7 @@ impl ClassicPeak {
     pub fn new() -> Self {
         Self {
             energy: EnergyTracker::new(0.5, 0.88, 500.0),
+            scaler: SpectrumScaler::new(),
             bar_heights: Vec::new(),
             peak_heights: Vec::new(),
             peak_velocities: Vec::new(),
@@ -44,22 +47,22 @@ impl ClassicPeak {
         }
     }
 
-    fn bin_fft(&self, fft: &FftSnapshot, band_count: usize) -> Vec<f32> {
+    fn bin_fft(&mut self, fft: &FftSnapshot, band_count: usize) -> Vec<f32> {
         let bin_count = fft.magnitudes.len().max(1);
         let max_log = ((bin_count - 1) as f32).ln().max(1.0);
-        let mut out = vec![0.0_f32; band_count];
-        for (band, slot) in out.iter_mut().enumerate() {
+        let mut raw = vec![0.0_f32; band_count];
+        for (band, slot) in raw.iter_mut().enumerate() {
             let lo_log = (band as f32 / band_count as f32) * max_log;
             let hi_log = ((band + 1) as f32 / band_count as f32) * max_log;
             let lo = (lo_log.exp().round() as usize).min(bin_count - 1);
             let hi = (hi_log.exp().round() as usize).clamp(lo + 1, bin_count);
-            let max_mag = fft.magnitudes[lo..hi]
+            *slot = fft.magnitudes[lo..hi]
                 .iter()
                 .cloned()
                 .fold(0.0_f32, f32::max);
-            *slot = (1.0 + max_mag / 1000.0).ln().min(1.0);
         }
-        out
+        self.scaler.update(&raw);
+        raw.iter().map(|&m| self.scaler.normalise(m)).collect()
     }
 
     fn smooth_and_update_peaks(&mut self, raw: &[f32]) {
@@ -296,6 +299,27 @@ mod tests {
             let mut ctx = TuiContext { grid: &mut grid2 };
             viz.render_tui(&mut ctx, &fft);
         }
+    }
+
+    /// Typical-listening input (peak FFT bin magnitude ≈ 6.4) should
+    /// push bar_heights above 60% once the AGC envelope converges.
+    #[test]
+    fn typical_listening_fills_pane() {
+        let mut mags = vec![0.5_f32; 128];
+        mags[3] = 6.4;
+        mags[4] = 5.0;
+        let fft = FftSnapshot::new(mags, 48_000, 256);
+        let mut viz = ClassicPeak::new();
+        let mut grid = CellGrid::new(120, 40);
+        for _ in 0..240 {
+            let mut ctx = TuiContext { grid: &mut grid };
+            viz.render_tui(&mut ctx, &fft);
+        }
+        let tallest = viz.bar_heights.iter().cloned().fold(0.0_f32, f32::max);
+        assert!(
+            tallest >= 0.6,
+            "classic_peak bar should reach ≥60% at typical listening volume, got {tallest}"
+        );
     }
 
     #[test]

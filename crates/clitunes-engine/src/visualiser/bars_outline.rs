@@ -5,10 +5,12 @@ use crate::audio::FftSnapshot;
 use crate::visualiser::cell_grid::{Cell, CellGrid, Rgb};
 use crate::visualiser::energy::EnergyTracker;
 use crate::visualiser::palette::{f32_to_u8, hsv_to_rgb, lerp};
+use crate::visualiser::scaling::SpectrumScaler;
 use crate::visualiser::{SurfaceKind, TuiContext, Visualiser, VisualiserId};
 
 pub struct BarsOutline {
     energy: EnergyTracker,
+    scaler: SpectrumScaler,
     bar_heights: Vec<f32>,
     last_w: u16,
 }
@@ -17,6 +19,7 @@ impl BarsOutline {
     pub fn new() -> Self {
         Self {
             energy: EnergyTracker::new(0.5, 0.88, 500.0),
+            scaler: SpectrumScaler::new(),
             bar_heights: Vec::new(),
             last_w: 0,
         }
@@ -34,14 +37,21 @@ impl BarsOutline {
         let bin_count = fft.magnitudes.len().max(1);
         let max_log = ((bin_count - 1) as f32).ln().max(1.0);
 
-        for band in 0..num_bands {
+        let mut raw = vec![0.0_f32; num_bands];
+        for (band, slot) in raw.iter_mut().enumerate() {
             let lo_log = (band as f32 / num_bands as f32) * max_log;
             let hi_log = ((band + 1) as f32 / num_bands as f32) * max_log;
             let lo = (lo_log.exp().round() as usize).min(bin_count - 1);
             let hi = (hi_log.exp().round() as usize).clamp(lo + 1, bin_count);
-            let slice = &fft.magnitudes[lo..hi];
-            let max_mag = slice.iter().cloned().fold(0.0_f32, f32::max);
-            let compressed = (1.0 + max_mag / 1000.0).ln().min(1.0);
+            *slot = fft.magnitudes[lo..hi]
+                .iter()
+                .cloned()
+                .fold(0.0_f32, f32::max);
+        }
+        self.scaler.update(&raw);
+
+        for (band, &mag) in raw.iter().enumerate().take(num_bands) {
+            let compressed = self.scaler.normalise(mag);
 
             let old = self.bar_heights[band];
             if compressed > old {
@@ -263,6 +273,27 @@ mod tests {
             let mut ctx = TuiContext { grid: &mut grid };
             vis.render_tui(&mut ctx, &fft);
         }
+    }
+
+    /// Typical-listening input (peak FFT bin magnitude ≈ 6.4) should
+    /// drive the outline well above the bottom after AGC convergence.
+    #[test]
+    fn typical_listening_fills_pane() {
+        let mut mags = vec![0.5_f32; 128];
+        mags[3] = 6.4;
+        mags[4] = 5.0;
+        let fft = FftSnapshot::new(mags, 48_000, 256);
+        let mut vis = BarsOutline::new();
+        let mut grid = CellGrid::new(120, 40);
+        for _ in 0..240 {
+            let mut ctx = TuiContext { grid: &mut grid };
+            vis.render_tui(&mut ctx, &fft);
+        }
+        let tallest = vis.bar_heights.iter().cloned().fold(0.0_f32, f32::max);
+        assert!(
+            tallest >= 0.6,
+            "outline should reach ≥60% at typical listening volume, got {tallest}"
+        );
     }
 
     #[test]

@@ -43,6 +43,7 @@ pub mod rain;
 pub mod retro;
 pub mod ripples;
 pub mod sakura;
+pub mod scaling;
 pub mod scatter;
 pub mod scope;
 pub mod terrain;

@@ -5,12 +5,15 @@ use crate::visualiser::braille::BrailleBuffer;
 use crate::visualiser::cell_grid::CellGrid;
 use crate::visualiser::energy::EnergyTracker;
 use crate::visualiser::palette::f32_to_u8;
+use crate::visualiser::scaling::SpectrumScaler;
 use crate::visualiser::{Rgb, SurfaceKind, TuiContext, Visualiser, VisualiserId};
 
 pub struct BarsDot {
     energy: EnergyTracker,
+    scaler: SpectrumScaler,
     braille: BrailleBuffer,
     bar_heights: Vec<f32>,
+    raw_bands: Vec<f32>,
     last_band_count: usize,
     last_w: u16,
     last_h: u16,
@@ -21,8 +24,10 @@ impl BarsDot {
     pub fn new() -> Self {
         Self {
             energy: EnergyTracker::new(0.5, 0.88, 500.0),
+            scaler: SpectrumScaler::new(),
             braille: BrailleBuffer::new(1, 1),
             bar_heights: Vec::new(),
+            raw_bands: Vec::new(),
             last_band_count: 0,
             last_w: 0,
             last_h: 0,
@@ -48,8 +53,7 @@ impl BarsDot {
             let lo = (lo_log.exp().round() as usize).min(bin_count - 1);
             let hi = (hi_log.exp().round() as usize).clamp(lo + 1, bin_count);
             let slice = &fft.magnitudes[lo..hi];
-            let max_mag = slice.iter().cloned().fold(0.0_f32, f32::max);
-            *slot = (1.0 + max_mag / 1000.0).ln().min(1.0);
+            *slot = slice.iter().cloned().fold(0.0_f32, f32::max);
         }
         out
     }
@@ -129,8 +133,14 @@ impl Visualiser for BarsDot {
             return;
         }
 
-        let raw = self.bands_from_fft(fft, num_bands);
-        self.smooth_bars(&raw);
+        self.raw_bands = self.bands_from_fft(fft, num_bands);
+        self.scaler.update(&self.raw_bands);
+        let normalised: Vec<f32> = self
+            .raw_bands
+            .iter()
+            .map(|&m| self.scaler.normalise(m))
+            .collect();
+        self.smooth_bars(&normalised);
 
         let bw = self.braille.width() as usize;
         let bh = self.braille.height() as usize;
@@ -253,6 +263,31 @@ mod tests {
             });
             assert!(any_tinted, "col {col} must have palette-tinted cells");
         }
+    }
+
+    /// After the AGC envelope has converged on a typical-listening input
+    /// (peak FFT bin magnitude ≈ 6.4, modeling peak_sample ≈ 0.05 at
+    /// fft_size=256), the loudest bar must fill the majority of the pane.
+    /// This is the whole point of the scaling fix — pre-fix, the bar would
+    /// sit at ≈1% of the pane height.
+    #[test]
+    fn typical_listening_fills_pane() {
+        let mut mags = vec![0.5_f32; 128];
+        mags[3] = 6.4;
+        mags[4] = 5.0;
+        mags[5] = 3.0;
+        let fft = FftSnapshot::new(mags, 48_000, 256);
+        let mut viz = BarsDot::new();
+        let mut grid = CellGrid::new(120, 40);
+        for _ in 0..240 {
+            let mut ctx = TuiContext { grid: &mut grid };
+            viz.render_tui(&mut ctx, &fft);
+        }
+        let tall = viz.bar_heights.iter().cloned().fold(0.0_f32, f32::max);
+        assert!(
+            tall >= 0.6,
+            "loudest bar should fill ≥60% at typical listening volume, got {tall}"
+        );
     }
 
     #[test]

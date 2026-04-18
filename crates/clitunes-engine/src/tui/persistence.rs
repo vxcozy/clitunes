@@ -84,7 +84,7 @@ pub struct State {
     /// forward-compat; see [`SOURCE_TONE`] / [`SOURCE_RADIO`].
     pub last_source: Option<String>,
 
-    /// Visualiser id (e.g. `"auralis"`, `"plasma"`). Loose strings
+    /// Visualiser id (e.g. `"plasma"`, `"matrix"`). Loose strings
     /// again so a future rename doesn't silently wipe the user's pick.
     pub last_visualiser: Option<String>,
 
@@ -254,7 +254,7 @@ mod tests {
             last_station_uuid: Some("abc-123".into()),
             last_station_name: Some("SomaFM Groove Salad".into()),
             last_source: Some(SOURCE_RADIO.into()),
-            last_visualiser: Some("auralis".into()),
+            last_visualiser: Some("plasma".into()),
             last_layout: Some("default".into()),
             last_spotify_uri: None,
         };
@@ -397,7 +397,7 @@ mod tests {
             last_station_uuid: Some("abc-123".into()),
             last_station_name: Some("SomaFM Groove Salad".into()),
             last_source: Some(SOURCE_SPOTIFY.into()),
-            last_visualiser: Some("auralis".into()),
+            last_visualiser: Some("plasma".into()),
             last_layout: Some("default".into()),
             last_spotify_uri: Some("spotify:track:4PTG3Z6ehGkBFwjybzWkR8".into()),
         };

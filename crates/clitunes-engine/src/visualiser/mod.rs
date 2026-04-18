@@ -5,11 +5,11 @@
 //! and emits `\x1b[38;2;…;48;2;…m` + glyph per cell, coalescing SGR
 //! prefixes across adjacent same-colour cells.
 //!
-//! Each visualiser chooses its own cell style. [`Auralis`] uses upper-half
-//! blocks (`▀`) for 2× vertical resolution on a bar spectrum. [`Plasma`]
-//! uses a density ramp of ~70 glyphs so each cell also carries intensity
-//! weight — the classic demoscene ASCII look. Future visualisers are free
-//! to mix these strategies or add new ones.
+//! Each visualiser chooses its own cell style. [`Plasma`] uses a density
+//! ramp of ~70 glyphs so each cell also carries intensity weight — the
+//! classic demoscene ASCII look. Other modes use upper-half blocks (`▀`)
+//! for 2× vertical resolution, or Unicode braille sub-pixels (4× vertical
+//! via U+2800). Future visualisers are free to mix these or add new ones.
 //!
 //! Shared infrastructure:
 //! - [`cell_grid`] — the grid, cells, and Rgb primitive.
@@ -21,13 +21,11 @@ use crate::audio::FftSnapshot;
 pub use clitunes_core::{SurfaceKind, VisualiserId};
 
 pub mod ansi_writer;
-pub mod auralis;
 pub mod bars_dot;
 pub mod bars_outline;
 pub mod binary;
 pub mod braille;
 pub mod butterfly;
-pub mod cascade;
 pub mod cell_grid;
 pub mod classic_peak;
 pub mod density_ramp;
@@ -47,20 +45,16 @@ pub mod ripples;
 pub mod sakura;
 pub mod scatter;
 pub mod scope;
-pub mod starfield;
 pub mod terrain;
-pub mod tideline;
 pub mod tunnel;
 pub mod vortex;
 pub mod wave;
 
 pub use ansi_writer::AnsiWriter;
-pub use auralis::Auralis;
 pub use bars_dot::BarsDot;
 pub use bars_outline::BarsOutline;
 pub use binary::Binary;
 pub use butterfly::Butterfly;
-pub use cascade::Cascade;
 pub use cell_grid::{Cell, CellGrid, Rgb};
 pub use classic_peak::ClassicPeak;
 pub use density_ramp::DensityRamp;
@@ -78,9 +72,7 @@ pub use ripples::Ripples;
 pub use sakura::Sakura;
 pub use scatter::Scatter;
 pub use scope::Scope;
-pub use starfield::Starfield;
 pub use terrain::Terrain;
-pub use tideline::Tideline;
 pub use tunnel::Tunnel;
 pub use vortex::Vortex;
 pub use wave::Wave;

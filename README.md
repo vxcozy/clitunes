@@ -58,7 +58,7 @@ Binaries land in `target/release/clitunes` and `target/release/clitunesd`.
 clitunes                          # full TUI — picker + visualiser carousel
 clitunes play|pause|next|prev     # headless playback control
 clitunes volume 75                # set volume
-clitunes viz auralis              # switch visualiser
+clitunes viz matrix               # switch visualiser
 clitunes source radio <uuid>      # tune to a radio station
 clitunes source local <path>      # play a local file or directory
 clitunes source spotify:<uri>     # play a Spotify track (Premium required)
@@ -68,7 +68,7 @@ clitunes --pane visualiser        # standalone fullscreen visualiser
 ```
 
 On first run, `clitunes` auto-starts the daemon and shows a station picker.
-Pick a genre, and audio starts streaming with the default **Auralis** visualiser.
+Pick a genre, and audio starts streaming with the default **Plasma** visualiser.
 
 ### Keys
 
@@ -85,14 +85,14 @@ Pick a genre, and audio starts streaming with the default **Auralis** visualiser
 Twenty-three visualisers ship with v1, all reactive to the audio spectrum.
 They fall into four families:
 
-- **Spectrum / core** — Auralis (default), Tideline, Cascade, Plasma,
-  Ripples, Tunnel, Metaballs, Starfield, Fire, Matrix, Moire, Vortex
+- **Spectrum / core** — Plasma (default), Ripples, Tunnel, Metaballs,
+  Fire, Matrix, Moire, Vortex
 - **Oscilloscopes (braille)** — Wave, Scope, Heartbeat
 - **Spectrum variants** — ClassicPeak, BarsDot, BarsOutline, Binary
 - **Particle / scene** — Scatter, Terrain, Butterfly, Pulse, Rain, Sakura,
   Firework, Retro
 
-Cycle through them with `n`/`p` or switch directly: `clitunes viz cascade`.
+Cycle through them with `n`/`p` or switch directly: `clitunes viz sakura`.
 Full catalogue and rendering notes in
 [guide/reference/cli.md](guide/reference/cli.md).
 

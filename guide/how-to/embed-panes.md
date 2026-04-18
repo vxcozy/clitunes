@@ -7,7 +7,7 @@ in terminal multiplexer layouts alongside other tools.
 
 | Pane | Description |
 |------|-------------|
-| `visualiser` | Fullscreen visualiser (default: Auralis) |
+| `visualiser` | Fullscreen visualiser (default: Plasma) |
 | `now-playing` | Track info strip (1–3 rows) |
 | `mini-spectrum` | Unicode block spectrum bars (1 row, for status lines) |
 
@@ -15,7 +15,7 @@ in terminal multiplexer layouts alongside other tools.
 
 ```
 clitunes --pane visualiser
-clitunes --pane visualiser --viz cascade
+clitunes --pane visualiser --viz matrix
 clitunes --pane now-playing
 clitunes --pane mini-spectrum
 ```

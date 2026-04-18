@@ -1,7 +1,7 @@
 //! Deterministic calibration tone source. First-run audio before any
 //! real source has been picked. Designed to be visually distinguishable
 //! from real music: narrow-band spectrum + slow amplitude envelope so
-//! Auralis reads as "placeholder, not song".
+//! the active visualiser reads as "placeholder, not song".
 
 use clitunes_core::{PcmFormat, StereoFrame};
 
@@ -24,8 +24,8 @@ impl CalibrationTone {
     }
 
     /// Fill `out` with the next block. Writes stereo with a small L/R phase
-    /// offset so the panorama isn't dead-centre (which would look like a
-    /// single point in Tideline).
+    /// offset so the panorama isn't dead-centre (which would collapse into
+    /// a single column on most spectrum visualisers).
     pub fn fill(&mut self, out: &mut [StereoFrame]) {
         let sr = self.format.sample_rate as f32;
         for slot in out.iter_mut() {

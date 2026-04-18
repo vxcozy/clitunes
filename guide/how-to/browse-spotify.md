@@ -12,15 +12,17 @@ if you haven't authenticated yet.
 
 ## From the TUI
 
-Open the picker with **s**. The picker has four tabs — switch between
-them with **Tab** (next) and **Shift+Tab** (previous):
+Open the picker with **s**. The picker has three tabs — press **Tab** to
+cycle forward through them (wraps back to the first after the last):
 
 | Tab | Contents |
 | --- | --- |
 | **Radio** | Curated station list (works without Spotify) |
 | **Search** | Spotify track search — type to query |
 | **Library** | Your saved tracks, saved albums, playlists, and recently played |
-| **Playlist** | Tracks inside a playlist you selected from the Library tab |
+
+From the Library tab, pressing Enter on a playlist drills into that
+playlist's tracks — a transient state, not a fourth tab.
 
 Inside each tab:
 

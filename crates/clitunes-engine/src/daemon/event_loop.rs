@@ -562,6 +562,11 @@ async fn dispatch_verbs(
     config: DaemonConfig,
     config_path: Option<std::path::PathBuf>,
 ) {
+    // Serialises overlapping `Verb::StartAuth` calls: once a flow is
+    // running the next verb gets a CommandResult ok but no events,
+    // matching the "idempotent — return current status" contract.
+    #[cfg(feature = "spotify")]
+    let auth_in_progress = Arc::new(AtomicBool::new(false));
     while let Some((envelope, reply_tx)) = verb_rx.recv().await {
         if stop.load(Ordering::Relaxed) {
             let _ = reply_tx.try_send(Event::command_err(&envelope.cmd_id, "daemon shutting down"));
@@ -751,8 +756,86 @@ async fn dispatch_verbs(
                 let _ = event_tx.send(snapshot).await;
                 let _ = reply_tx.try_send(Event::command_ok(cmd_id));
             }
+            #[cfg(feature = "spotify")]
+            Verb::StartAuth => {
+                // Ack first so the client's CommandResult round-trip
+                // isn't blocked by the OAuth flow. Progress arrives via
+                // the `auth` event topic.
+                let _ = reply_tx.try_send(Event::command_ok(cmd_id));
+                dispatch_start_auth(&auth_in_progress, event_tx.clone()).await;
+            }
+            #[cfg(not(feature = "spotify"))]
+            Verb::StartAuth => {
+                let _ = reply_tx.try_send(Event::command_err(
+                    cmd_id,
+                    "Spotify not enabled in this build",
+                ));
+            }
         }
     }
+}
+
+/// Kick off a Spotify OAuth flow on behalf of a TUI client. Bails
+/// early when a flow is already running so repeated `a` presses on
+/// the Settings tab don't open a second browser window. Emits
+/// [`Event::AuthStarted`] before handing control to librespot-oauth
+/// and [`Event::AuthCompleted`] / [`Event::AuthFailed`] when the
+/// spawned task terminates.
+#[cfg(feature = "spotify")]
+async fn dispatch_start_auth(auth_in_progress: &Arc<AtomicBool>, event_tx: mpsc::Sender<Event>) {
+    // `compare_exchange` guarantees a single winner on concurrent
+    // presses; subsequent verbs observe `true` and skip silently.
+    if auth_in_progress
+        .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+        .is_err()
+    {
+        tracing::debug!(target: "clitunesd", "start_auth: flow already in progress, ignoring");
+        return;
+    }
+
+    let Some(cred_path) = crate::sources::spotify::default_credentials_path() else {
+        let _ = event_tx
+            .send(Event::AuthFailed {
+                reason: "cannot determine config directory".into(),
+            })
+            .await;
+        auth_in_progress.store(false, Ordering::SeqCst);
+        return;
+    };
+
+    // Announce before blocking so the TUI can flip to "pending" before
+    // the browser-open / listener-bind latency.
+    let _ = event_tx.send(Event::AuthStarted { url: None }).await;
+
+    let in_progress = Arc::clone(auth_in_progress);
+    tokio::spawn(async move {
+        // 5-minute ceiling: users who walked away get a clean failure
+        // instead of a zombie flow holding the in-progress flag forever.
+        const AUTH_TIMEOUT: Duration = Duration::from_secs(300);
+
+        let result = tokio::time::timeout(
+            AUTH_TIMEOUT,
+            tokio::task::spawn_blocking(move || {
+                crate::sources::spotify::authenticate_from_daemon(&cred_path)
+            }),
+        )
+        .await;
+
+        let event = match result {
+            Ok(Ok(Ok(_))) => Event::AuthCompleted,
+            Ok(Ok(Err(e))) => Event::AuthFailed {
+                reason: e.to_string(),
+            },
+            Ok(Err(join_err)) => Event::AuthFailed {
+                reason: format!("auth task panicked: {join_err}"),
+            },
+            Err(_elapsed) => Event::AuthFailed {
+                reason: "timeout".into(),
+            },
+        };
+        let _ = event_tx.send(event).await;
+        in_progress.store(false, Ordering::SeqCst);
+    });
 }
 
 /// Build the `ConfigSnapshot` event the daemon sends in reply to

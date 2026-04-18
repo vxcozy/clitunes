@@ -117,6 +117,10 @@ struct AppState {
     /// Pending debounced search query. Cleared after the `Verb::Search`
     /// is actually dispatched. Holds `(query, dirty_at)`.
     pending_search: Option<(String, Instant)>,
+    /// Set to `true` by the `AuthCompleted` event handler so the main
+    /// loop re-issues `Verb::ReadConfig` from the verb-sending context
+    /// instead of mid-event-handle. Cleared after dispatch.
+    auth_refresh_pending: bool,
     /// Album art state. Updated from `NowPlayingChanged.art_url`;
     /// painted in the top-right of the grid when a cover is loaded.
     album_art: AlbumArtState,
@@ -189,6 +193,7 @@ impl AppState {
             breathing: BreathingAnimation::default(),
             frame_idx: 0,
             pending_search: None,
+            auth_refresh_pending: false,
             album_art: AlbumArtState::new(),
             now_playing: NowPlayingState::default(),
             command_bar: CommandBarState::new(VIZ_CATALOGUE),
@@ -336,6 +341,22 @@ impl AppState {
                     auth_status: status,
                     auth_detail: auth_detail.clone(),
                 });
+            }
+            Event::AuthStarted { .. } => {
+                // Daemon confirms the flow is running; keeps the UI in
+                // sync even if the `a` keybind never fired locally
+                // (e.g. a second client triggered it).
+                self.picker_state.set_auth_started();
+                self.auth_refresh_pending = false;
+            }
+            Event::AuthCompleted => {
+                self.picker_state.set_auth_completed();
+                // Re-issue ReadConfig so the Settings tab flips from
+                // "Logged out" to "Logged in" on the next paint.
+                self.auth_refresh_pending = true;
+            }
+            Event::AuthFailed { reason } => {
+                self.picker_state.set_auth_failed(reason.clone());
             }
             _ => {}
         }
@@ -495,6 +516,19 @@ impl AppState {
                             );
                         }
                     }
+                    PickerAction::StartAuth => {
+                        if let Err(e) = verb_tx.try_send(Verb::StartAuth) {
+                            tracing::error!(
+                                target: "clitunes",
+                                error = %e,
+                                "picker: failed to send start_auth verb"
+                            );
+                            // Unwind the optimistic flag we set in
+                            // `handle_settings` so the user can retry.
+                            self.picker_state
+                                .set_auth_failed("failed to enqueue auth request".into());
+                        }
+                    }
                     PickerAction::Quit => {
                         self.quit_fade.start();
                     }
@@ -607,6 +641,20 @@ impl RenderLoop {
             while let Ok(key) = key_rx.try_recv() {
                 if state.handle_key(key, &self.verb_tx) {
                     let _ = writer.clear_screen();
+                }
+            }
+
+            // Refresh the Settings-tab snapshot when the daemon
+            // reported a successful OAuth flow — the new auth status
+            // arrives via the next `ConfigSnapshot`.
+            if state.auth_refresh_pending {
+                state.auth_refresh_pending = false;
+                if let Err(e) = self.verb_tx.try_send(Verb::ReadConfig) {
+                    tracing::error!(
+                        target: "clitunes",
+                        error = %e,
+                        "auth: failed to refresh config after completion"
+                    );
                 }
             }
 

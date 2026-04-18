@@ -56,7 +56,7 @@ const TAB_SETTINGS_LABEL: &str = "Settings";
 const FOOTER_RADIO: &str = "1 radio  2 search  3 library  4 settings  esc close";
 const FOOTER_SEARCH: &str = "type to search   ↑/↓ move   enter play   esc clear";
 const FOOTER_LIBRARY: &str = "1 radio  2 search  3 library  4 settings  esc close";
-const FOOTER_SETTINGS: &str = "1 radio  2 search  3 library  4 settings  esc close";
+const FOOTER_SETTINGS: &str = "a auth  1 radio  2 search  3 library  4 settings  esc close";
 
 /// Minimum comfortable modal dimensions. See [`paint_picker`] for the
 /// fallback behavior when the grid is smaller.
@@ -223,6 +223,8 @@ pub fn paint_picker(
             PickerTab::Settings => paint_settings_body(
                 grid,
                 state.settings.as_ref(),
+                state.auth_in_progress,
+                state.auth_error.as_deref(),
                 inner_x0,
                 inner_w,
                 body_y0,
@@ -548,6 +550,8 @@ fn paint_library_body(
 fn paint_settings_body(
     grid: &mut CellGrid,
     snapshot: Option<&SettingsSnapshot>,
+    auth_in_progress: bool,
+    auth_error: Option<&str>,
     inner_x0: u16,
     inner_w: u16,
     body_y0: u16,
@@ -644,23 +648,47 @@ fn paint_settings_body(
     // Blank spacer, then the auth-instruction row.
     row = row.saturating_add(1);
     if row < rows_end {
-        let instruction = match snap.auth_status {
-            SettingsAuthStatus::LoggedIn => {
-                "Run `clitunes auth` again to refresh scopes or switch accounts."
-            }
-            SettingsAuthStatus::LoggedOut => "Run `clitunes auth` in another terminal to sign in.",
-            SettingsAuthStatus::ScopesInsufficient => {
-                "Run `clitunes auth` to grant the new scopes."
-            }
-            SettingsAuthStatus::Unreadable => {
-                "Remove the credential file and run `clitunes auth` to retry."
-            }
-        };
-        write_centered(grid, inner_x0, inner_w, row, instruction, body_fg, surface);
+        // Pending state dominates: while the OAuth flow is running,
+        // re-running `clitunes auth` would race the daemon, so only
+        // show the progress line.
+        if auth_in_progress {
+            write_centered(
+                grid,
+                inner_x0,
+                inner_w,
+                row,
+                "Opening browser… waiting for Spotify to complete sign-in.",
+                accent,
+                surface,
+            );
+        } else {
+            let instruction = match snap.auth_status {
+                SettingsAuthStatus::LoggedIn => "Press `a` to refresh scopes or switch accounts.",
+                SettingsAuthStatus::LoggedOut => {
+                    "Press `a` to sign in — opens Spotify in your browser."
+                }
+                SettingsAuthStatus::ScopesInsufficient => "Press `a` to grant the new scopes.",
+                SettingsAuthStatus::Unreadable => {
+                    "Remove the credential file and press `a` to retry."
+                }
+            };
+            write_centered(grid, inner_x0, inner_w, row, instruction, body_fg, surface);
+        }
         row = row.saturating_add(1);
     }
 
-    // Edit-config hint — only meaningful when we know the path.
+    // Error banner — only when a previous flow failed and the user
+    // hasn't retried yet.
+    if let Some(reason) = auth_error {
+        if row < rows_end && !auth_in_progress {
+            let msg = format!("Last attempt failed: {reason}");
+            write_centered(grid, inner_x0, inner_w, row, &msg, body_fg, surface);
+            row = row.saturating_add(1);
+        }
+    }
+
+    // Edit-config hint — only meaningful when we know the path and we
+    // still have screen real-estate left.
     if row < rows_end && snap.config_path.is_some() {
         write_centered(
             grid,
@@ -1071,12 +1099,50 @@ mod tests {
         assert!(text.contains("Logged out"), "missing auth status");
         assert!(text.contains("clitunes"), "missing device name");
         assert!(text.contains("daemon.toml"), "missing config path");
+        // New in-TUI auth: the instruction should tell users to press `a`.
         assert!(
-            text.contains("clitunes auth"),
-            "missing auth-trigger instruction"
+            text.contains("Press `a` to sign in"),
+            "missing in-TUI auth-trigger instruction"
         );
         // Footer should advertise the new keybinds.
         assert!(text.contains("4 settings"), "footer missing 4 settings");
+        assert!(text.contains("a auth"), "footer missing a auth keybind");
+    }
+
+    #[test]
+    fn paint_picker_settings_tab_shows_pending_state() {
+        let mut grid = CellGrid::new(120, 40);
+        let list = baked_list();
+        let theme = default_theme();
+        let mut state = PickerState::new(&list, 0);
+        state.active_tab = PickerTab::Settings;
+        state.set_settings(sample_settings_snapshot(SettingsAuthStatus::LoggedOut));
+        state.set_auth_started();
+        let _rect = paint_picker(&mut grid, &list, &state, &theme).expect("rect");
+        let text: String = grid.cells().iter().map(|c| c.ch).collect();
+        assert!(
+            text.contains("Opening browser"),
+            "missing pending-state message"
+        );
+        assert!(
+            !text.contains("Press `a` to sign in"),
+            "pending state should replace the sign-in hint"
+        );
+    }
+
+    #[test]
+    fn paint_picker_settings_tab_shows_auth_error() {
+        let mut grid = CellGrid::new(120, 40);
+        let list = baked_list();
+        let theme = default_theme();
+        let mut state = PickerState::new(&list, 0);
+        state.active_tab = PickerTab::Settings;
+        state.set_settings(sample_settings_snapshot(SettingsAuthStatus::LoggedOut));
+        state.set_auth_failed("timeout".into());
+        let _rect = paint_picker(&mut grid, &list, &state, &theme).expect("rect");
+        let text: String = grid.cells().iter().map(|c| c.ch).collect();
+        assert!(text.contains("Last attempt failed"), "missing error banner");
+        assert!(text.contains("timeout"), "missing error reason");
     }
 
     #[test]

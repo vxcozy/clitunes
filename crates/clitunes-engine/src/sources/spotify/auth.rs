@@ -247,6 +247,39 @@ pub fn load_or_authenticate(cred_path: &Path) -> Result<AuthResult> {
     })
 }
 
+/// Run the OAuth PKCE flow on behalf of the daemon and persist the
+/// resulting credentials. Unlike [`load_or_authenticate`], this does
+/// **not** read from stdin — the daemon has no TTY and a stdin prompt
+/// would deadlock. The caller is expected to have already confirmed
+/// consent at the UI layer (the TUI `a` keybind, a future settings
+/// dialog, etc.); this function writes the consent flag as part of
+/// the credential save.
+///
+/// Always asks librespot-oauth to open the browser via the `open`
+/// crate. If that fails (SSH / no browser handler), librespot still
+/// prints the URL to the daemon's stdout — which is `/dev/null` for
+/// the double-forked daemon, so that message is lost. Surfacing the
+/// URL back to the client is a future improvement; today the
+/// fallback is to run `clitunes auth` from a second terminal.
+pub fn authenticate_from_daemon(cred_path: &Path) -> Result<AuthResult> {
+    let token = run_oauth_flow(true).context("Spotify OAuth PKCE flow failed")?;
+    info!("Spotify OAuth flow completed (daemon-driven)");
+
+    save_cached(
+        cred_path,
+        &CachedCredentials {
+            refresh_token: token.refresh_token.clone(),
+            consent_given: true,
+            scopes: required_scopes(),
+        },
+    )?;
+
+    Ok(AuthResult {
+        credentials: Credentials::with_access_token(token.access_token.clone()),
+        token,
+    })
+}
+
 /// Check whether the user has already consented to using librespot.
 /// If not, print the consent prompt and require confirmation.
 ///

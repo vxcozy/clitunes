@@ -119,6 +119,9 @@ pub enum PickerAction {
     /// User opened or refreshed the Settings tab. Caller should send
     /// `Verb::ReadConfig` so the daemon echoes a fresh snapshot.
     ReadConfig,
+    /// User asked the daemon to run the Spotify OAuth flow (Settings
+    /// tab, `a` key). Caller should send `Verb::StartAuth`.
+    StartAuth,
     /// User pressed `s` or `esc`. Caller should hide the picker.
     Hide,
     /// User pressed `q`. Caller should shut clitunes down.
@@ -206,6 +209,15 @@ pub struct PickerState {
     /// renders a "loading" line in that case.
     pub settings: Option<SettingsSnapshot>,
 
+    /// `true` from the moment the user presses `a` on the Settings
+    /// tab until the daemon emits `AuthCompleted` or `AuthFailed`.
+    /// Suppresses the re-entry warning and swaps the status hint for
+    /// a "waiting for browser" message.
+    pub auth_in_progress: bool,
+    /// Last `AuthFailed { reason }` from the daemon, shown inline on
+    /// the Settings tab until the next `a` press clears it.
+    pub auth_error: Option<String>,
+
     /// Banner shown in the header when the user's last station has
     /// gone missing. `None` on the happy path.
     pub banner: Option<String>,
@@ -229,6 +241,8 @@ impl PickerState {
             search_cursor: 0,
             library: LibraryView::default(),
             settings: None,
+            auth_in_progress: false,
+            auth_error: None,
             banner: None,
             rapid_count: 0,
             last_nav_at: None,
@@ -274,6 +288,28 @@ impl PickerState {
     /// by the render loop when a `ConfigSnapshot` event arrives.
     pub fn set_settings(&mut self, snapshot: SettingsSnapshot) {
         self.settings = Some(snapshot);
+    }
+
+    /// Mark that the daemon has started the OAuth flow. Called from
+    /// the render loop when an `AuthStarted` event arrives. Idempotent
+    /// with the state already set by the `a` keybind.
+    pub fn set_auth_started(&mut self) {
+        self.auth_in_progress = true;
+        self.auth_error = None;
+    }
+
+    /// Auth flow ended successfully — clear the pending state so the
+    /// Settings tab re-renders as "Logged in" on the next snapshot.
+    pub fn set_auth_completed(&mut self) {
+        self.auth_in_progress = false;
+        self.auth_error = None;
+    }
+
+    /// Auth flow failed. `reason` is rendered under the status line
+    /// until the user presses `a` again.
+    pub fn set_auth_failed(&mut self, reason: String) {
+        self.auth_in_progress = false;
+        self.auth_error = Some(reason);
     }
 
     /// Handle a key. Public entry point used by the render loop.
@@ -364,14 +400,31 @@ impl PickerState {
         }
     }
 
-    /// Settings tab is read-only in this slice — the only useful key
-    /// is `Enter`, which re-requests the snapshot so users can see
-    /// auth state updates after running `clitunes auth` elsewhere.
+    /// Settings tab: Enter re-requests the config snapshot, and `a`
+    /// kicks off the in-TUI OAuth flow (ignored while a flow is
+    /// pending or the user is already logged in with valid scopes).
     fn handle_settings(&mut self, key: PickerKey) -> PickerAction {
         match key {
             PickerKey::Enter => PickerAction::ReadConfig,
+            PickerKey::Char('a') | PickerKey::Char('A') => {
+                if self.auth_in_progress || self.is_logged_in() {
+                    return PickerAction::Ignored;
+                }
+                // Clear any stale failure banner so the user sees a
+                // clean "pending" state on their second attempt.
+                self.auth_error = None;
+                self.auth_in_progress = true;
+                PickerAction::StartAuth
+            }
             _ => PickerAction::Ignored,
         }
+    }
+
+    fn is_logged_in(&self) -> bool {
+        matches!(
+            self.settings.as_ref().map(|s| s.auth_status),
+            Some(SettingsAuthStatus::LoggedIn)
+        )
     }
 
     fn handle_radio(&mut self, key: PickerKey, now: Instant) -> PickerAction {
@@ -707,6 +760,97 @@ mod tests {
         let mut st = PickerState::new(&list, 0);
         st.active_tab = PickerTab::Settings;
         assert_eq!(st.handle_key(PickerKey::Enter), PickerAction::ReadConfig);
+    }
+
+    fn snapshot_with_status(status: SettingsAuthStatus) -> SettingsSnapshot {
+        SettingsSnapshot {
+            device_name: "clitunes".into(),
+            connect_enabled: false,
+            config_path: None,
+            credentials_path: None,
+            auth_status: status,
+            auth_detail: None,
+        }
+    }
+
+    #[test]
+    fn settings_tab_a_starts_auth_when_logged_out() {
+        let list = baked_list();
+        let mut st = PickerState::new(&list, 0);
+        st.active_tab = PickerTab::Settings;
+        st.set_settings(snapshot_with_status(SettingsAuthStatus::LoggedOut));
+        assert_eq!(st.handle_key(PickerKey::Char('a')), PickerAction::StartAuth);
+        assert!(st.auth_in_progress, "flag must flip on 'a' press");
+    }
+
+    #[test]
+    fn settings_tab_a_ignored_while_in_progress() {
+        let list = baked_list();
+        let mut st = PickerState::new(&list, 0);
+        st.active_tab = PickerTab::Settings;
+        st.set_settings(snapshot_with_status(SettingsAuthStatus::LoggedOut));
+        st.handle_key(PickerKey::Char('a'));
+        // Second press during the pending window must not fire again.
+        assert_eq!(st.handle_key(PickerKey::Char('a')), PickerAction::Ignored);
+    }
+
+    #[test]
+    fn settings_tab_a_ignored_when_already_logged_in() {
+        let list = baked_list();
+        let mut st = PickerState::new(&list, 0);
+        st.active_tab = PickerTab::Settings;
+        st.set_settings(snapshot_with_status(SettingsAuthStatus::LoggedIn));
+        assert_eq!(st.handle_key(PickerKey::Char('a')), PickerAction::Ignored);
+        assert!(!st.auth_in_progress);
+    }
+
+    #[test]
+    fn settings_tab_a_starts_auth_when_scopes_insufficient() {
+        let list = baked_list();
+        let mut st = PickerState::new(&list, 0);
+        st.active_tab = PickerTab::Settings;
+        st.set_settings(snapshot_with_status(SettingsAuthStatus::ScopesInsufficient));
+        assert_eq!(st.handle_key(PickerKey::Char('a')), PickerAction::StartAuth);
+    }
+
+    #[test]
+    fn auth_completed_clears_pending_flag() {
+        let list = baked_list();
+        let mut st = PickerState::new(&list, 0);
+        st.active_tab = PickerTab::Settings;
+        st.set_settings(snapshot_with_status(SettingsAuthStatus::LoggedOut));
+        st.handle_key(PickerKey::Char('a'));
+        assert!(st.auth_in_progress);
+        st.set_auth_completed();
+        assert!(!st.auth_in_progress);
+        assert!(st.auth_error.is_none());
+    }
+
+    #[test]
+    fn auth_failed_surfaces_reason() {
+        let list = baked_list();
+        let mut st = PickerState::new(&list, 0);
+        st.active_tab = PickerTab::Settings;
+        st.set_settings(snapshot_with_status(SettingsAuthStatus::LoggedOut));
+        st.handle_key(PickerKey::Char('a'));
+        st.set_auth_failed("timeout".into());
+        assert!(!st.auth_in_progress);
+        assert_eq!(st.auth_error.as_deref(), Some("timeout"));
+    }
+
+    #[test]
+    fn second_a_press_after_failure_retries_and_clears_error() {
+        let list = baked_list();
+        let mut st = PickerState::new(&list, 0);
+        st.active_tab = PickerTab::Settings;
+        st.set_settings(snapshot_with_status(SettingsAuthStatus::LoggedOut));
+        st.handle_key(PickerKey::Char('a'));
+        st.set_auth_failed("network unreachable".into());
+        assert!(st.auth_error.is_some());
+
+        assert_eq!(st.handle_key(PickerKey::Char('a')), PickerAction::StartAuth);
+        assert!(st.auth_in_progress);
+        assert!(st.auth_error.is_none(), "retry clears stale banner");
     }
 
     #[test]

@@ -97,6 +97,28 @@ pub enum Event {
     /// the on-disk auth state. Emitted in response to `Verb::ReadConfig`
     /// so the TUI Settings tab can render without poking at the
     /// filesystem itself.
+    /// A daemon-driven Spotify OAuth flow has begun. Emitted once per
+    /// `Verb::StartAuth` before control is handed to librespot-oauth.
+    /// `url` is optional because librespot-oauth 0.8 does not expose
+    /// the authorize URL through its public API; when the daemon can't
+    /// capture it, the field is `None` and the client shows a generic
+    /// "opening browser" message. Present for forward compatibility
+    /// with a future refactor that surfaces the URL.
+    AuthStarted {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        url: Option<String>,
+    },
+    /// The OAuth flow completed successfully and credentials were
+    /// written to the on-disk cache. Clients typically follow this by
+    /// re-issuing `Verb::ReadConfig` to refresh the auth-status badge.
+    AuthCompleted,
+    /// The OAuth flow terminated without usable credentials. `reason`
+    /// is a short human-readable message — e.g. `"timeout"` if the
+    /// user never finished in the browser, or a wrapped librespot
+    /// error string.
+    AuthFailed {
+        reason: String,
+    },
     ConfigSnapshot {
         /// Device name shown in Spotify Connect pickers (from
         /// `[connect] name` in `daemon.toml`).
@@ -231,6 +253,7 @@ impl Event {
             Self::ConnectDeviceConnected { .. } => "connect",
             Self::ConnectDeviceDisconnected => "connect",
             Self::ConfigSnapshot { .. } => "config",
+            Self::AuthStarted { .. } | Self::AuthCompleted | Self::AuthFailed { .. } => "auth",
         }
     }
 }
@@ -469,6 +492,51 @@ mod tests {
         assert!(line.contains("auth_detail"));
         let parsed = Event::from_line(&line).unwrap();
         assert_eq!(parsed, event);
+    }
+
+    #[test]
+    fn auth_started_roundtrip_without_url() {
+        let event = Event::AuthStarted { url: None };
+        let line = event.to_line();
+        assert!(line.contains("auth_started"));
+        // url omitted when None so older clients decode cleanly.
+        assert!(!line.contains("url"));
+        let parsed = Event::from_line(&line).unwrap();
+        assert_eq!(parsed, event);
+        assert_eq!(event.topic(), "auth");
+    }
+
+    #[test]
+    fn auth_started_roundtrip_with_url() {
+        let event = Event::AuthStarted {
+            url: Some("https://accounts.spotify.com/authorize?client_id=…".into()),
+        };
+        let line = event.to_line();
+        assert!(line.contains("accounts.spotify.com"));
+        let parsed = Event::from_line(&line).unwrap();
+        assert_eq!(parsed, event);
+    }
+
+    #[test]
+    fn auth_completed_roundtrip() {
+        let event = Event::AuthCompleted;
+        let line = event.to_line();
+        assert!(line.contains("auth_completed"));
+        let parsed = Event::from_line(&line).unwrap();
+        assert_eq!(parsed, event);
+        assert_eq!(event.topic(), "auth");
+    }
+
+    #[test]
+    fn auth_failed_roundtrip() {
+        let event = Event::AuthFailed {
+            reason: "timeout".into(),
+        };
+        let line = event.to_line();
+        assert!(line.contains("timeout"));
+        let parsed = Event::from_line(&line).unwrap();
+        assert_eq!(parsed, event);
+        assert_eq!(event.topic(), "auth");
     }
 
     #[test]

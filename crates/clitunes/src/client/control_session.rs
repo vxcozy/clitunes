@@ -37,6 +37,9 @@ impl ControlSession {
             // Settings tab consumes `ConfigSnapshot` events echoed back
             // in response to `Verb::ReadConfig`.
             "config".into(),
+            // In-TUI Spotify auth (CLI-92): `AuthStarted` / `AuthCompleted`
+            // / `AuthFailed` progress events for the `a` keybind.
+            "auth".into(),
         ];
         let client = ControlClient::connect(socket_path, "clitunes-tui", subscriptions).await?;
         Ok(Self { client })

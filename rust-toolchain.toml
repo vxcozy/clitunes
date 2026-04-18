@@ -1,31 +1,20 @@
 # Pin the project toolchain so local builds match CI lint-for-lint.
 #
-# Three preventable CI failures in v1.0 / v1.3 work came from rust
-# version drift — local rustc 1.93 was missing clippy lints that CI
-# fired on 1.95 (collapsible_match, unnecessary_sort_by,
-# explicit_counter_loop). Pinning here means `cargo <anything>` locally
-# uses exactly the toolchain CI uses, so those lints surface before
-# `git push`.
+# Rust version drift between local (1.93) and CI (1.95) caused three
+# preventable clippy failures in v1.0 / v1.3 work. This pin forces
+# both to compile under 1.95.0 so new lints fire before `git push`.
 #
 # Bumping policy: a single deliberate PR bumps the channel here and
 # triggers a full CI run under the new version. Any new lints fire on
-# that PR, not buried inside a feature PR.
+# that PR in isolation, not buried inside a feature PR.
 #
-# `targets` pre-installs the 4 release-cross-compile std libraries so
-# rustup doesn't have to chase them at build time — this is what the
-# release workflow needs, and what bit the first v1.1.0 tag cut (CI job
-# `build (x86_64-apple-darwin, macos-latest)` failed "can't find crate
-# for core" because `profile = minimal` had not also installed the
-# x86_64 stdlib). Contributors on the host target pay a one-time ~40 MB
-# for the additional stdlibs; everyone else gets the right binaries.
+# Intentionally minimal: channel only, no `components`, no `targets`,
+# no `profile`. An earlier version set all of these — broke the v1.1.0
+# release workflow (the minimal profile stripped cross-compile stdlibs
+# that the matrix build needs) and the e2e job (cause unknown but
+# traceable to the same file change). CI's existing action directives
+# (`dtolnay/rust-toolchain` with `targets` in the matrix) supply what
+# they need on top of this base channel pin.
 
 [toolchain]
 channel = "1.95.0"
-components = ["rustfmt", "clippy"]
-profile = "minimal"
-targets = [
-    "aarch64-apple-darwin",
-    "x86_64-apple-darwin",
-    "x86_64-unknown-linux-gnu",
-    "aarch64-unknown-linux-gnu",
-]

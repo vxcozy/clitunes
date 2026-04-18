@@ -17,7 +17,7 @@ Pick one:
 
 ```
 brew install vxcozy/tap/clitunes                                              # Homebrew (macOS + Linux)
-cargo install --git https://github.com/vxcozy/clitunes --tag v1.0.0 --locked  # Cargo
+cargo install --git https://github.com/vxcozy/clitunes --tag v1.1.0 --locked  # Cargo
 ```
 
 Plain `cargo install clitunes` from crates.io is pending the next upstream

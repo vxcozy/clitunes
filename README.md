@@ -11,7 +11,9 @@ visualisers at 30 fps using half-block ANSI in any terminal that supports
 
 ## Releases
 
-**Latest:** [v1.0.0](https://github.com/vxcozy/clitunes/releases/tag/v1.0.0) (2026-04-17) — first public release. Radio, local files, Spotify URI playback, Spotify Connect receiver, 23 visualisers, daemon/client split. Pre-built binaries for macOS (Apple Silicon + Intel) and Linux (arm64 + x86_64).
+**Latest:** [v1.1.0](https://github.com/vxcozy/clitunes/releases/tag/v1.1.0) (2026-04-18) — adds the `:viz <name>` fuzzy-jump command bar for the full TUI, expands pane mode to all 23 visualisers, and picks up a `rustls-webpki` security bump.
+
+**Previous:** [v1.0.0](https://github.com/vxcozy/clitunes/releases/tag/v1.0.0) (2026-04-17) — first public release. Radio, local files, Spotify URI playback, Spotify Connect receiver, 23 visualisers, daemon/client split. Pre-built binaries for macOS (Apple Silicon + Intel) and Linux (arm64 + x86_64).
 
 Full history in [CHANGELOG.md](CHANGELOG.md). Every tag also produces a
 [GitHub release](https://github.com/vxcozy/clitunes/releases) with checksummed tarballs.
@@ -27,13 +29,13 @@ brew install vxcozy/tap/clitunes
 **Direct download** (macOS + Linux, all four architectures):
 
 Grab the pre-built tarball from the
-[v1.0.0 release page](https://github.com/vxcozy/clitunes/releases/tag/v1.0.0)
+[latest release page](https://github.com/vxcozy/clitunes/releases/latest)
 and drop the binaries on your PATH.
 
 **Cargo** (any Rust toolchain):
 
 ```
-cargo install --git https://github.com/vxcozy/clitunes --tag v1.0.0 --locked
+cargo install --git https://github.com/vxcozy/clitunes --tag v1.1.0 --locked
 ```
 
 System prerequisites: `libasound2-dev` + `pkg-config` on Linux, Xcode Command

@@ -1,0 +1,17 @@
+# Pin the project toolchain so local builds match CI lint-for-lint.
+#
+# Three preventable CI failures in v1.0 / v1.3 work came from rust
+# version drift — local rustc 1.93 was missing clippy lints that CI
+# fired on 1.95 (collapsible_match, unnecessary_sort_by,
+# explicit_counter_loop). Pinning here means `cargo <anything>` locally
+# uses exactly the toolchain CI uses, so those lints surface before
+# `git push`.
+#
+# Bumping policy: a single deliberate PR bumps the channel here and
+# triggers a full CI run under the new version. Any new lints fire on
+# that PR, not buried inside a feature PR.
+
+[toolchain]
+channel = "1.95.0"
+components = ["rustfmt", "clippy"]
+profile = "minimal"

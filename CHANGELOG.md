@@ -7,6 +7,78 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-04-18
+
+### Added
+
+- **Settings tab in the picker.** Fourth tab next to Radio / Search /
+  Library, opened with `4` or Tab-cycled. Shows Spotify auth status
+  (Logged in / Logged out / Needs re-auth / Error with reason),
+  Connect device name, resolved `daemon.toml` path, credentials path,
+  and a context-sensitive instruction. Enter re-requests a fresh
+  snapshot. New `Verb::ReadConfig` / `Event::ConfigSnapshot` IPC pair
+  carries the payload.
+- **In-TUI Spotify sign-in.** On the Settings tab, press `a` to start
+  the OAuth flow without leaving the TUI. Daemon opens the user's
+  default browser, reports `AuthStarted` / `AuthCompleted` /
+  `AuthFailed` events that the tab renders in real time. On success
+  the Settings tab auto-flips to "Logged in". 5-minute daemon
+  timeout; 5-minute-30-second client timeout so the UI recovers even
+  if the daemon crashes mid-flow. Idempotent — a second `a` press
+  while a flow is in progress is silently ignored. Reconnect-safe:
+  the Settings tab re-syncs against the daemon's actual auth state
+  after a control-socket drop.
+- **FFT signal-path diagnostics.** `RUST_LOG=clitunes::audio=trace`
+  now emits a per-60-frame line with `frames_read`, `peak_sample`,
+  `peak_mag`, and `sample_rate` so audio-pipeline health is
+  observable without a custom build. New regression test on
+  `FftTap::snapshot_from` pins sinusoid-amplitude preservation and
+  FFT bin-location correctness.
+
+### Changed
+
+- **Visualisers render edge-to-edge.** Removed the defensive 1-col /
+  2-row inset on the cell grid. `AnsiWriter` now disables DECAWM for
+  the render session (re-enabled on shutdown) so writing the
+  bottom-right cell no longer risks a terminal scroll. The full pane
+  is now usable.
+- **Braille visualisers fill their grid.** Scope's intrinsically-
+  square Lissajous letterboxes with a muted phosphor-green tint
+  instead of black; Wave, Heartbeat, and BarsDot paint empty cells
+  with palette-tinted backgrounds instead of raw black; Pulse's disc
+  now grows against the longer half-axis so it fills wide panes.
+- **Bar-family visualisers scale with the audio.** `bars_dot`,
+  `bars_outline`, and `classic_peak` now pipe FFT magnitudes through
+  a shared `SpectrumScaler` that applies log/dB compression
+  (`-60 dB` → `0 dB` → `[0, 1.0]`) plus a decaying peak tracker so
+  bars reach 80–90 % of pane height at typical listening volumes,
+  stay visible through quiet passages, and peak cleanly on loud
+  transients without clipping.
+- **Snappier reactivity across the braille catalogue.** Shared AGC
+  attack tightened 50 ms → 25 ms, release 2.5 s → 1.2 s;
+  `EnergyTracker` release retain 0.88 → 0.75 (258 ms → 115 ms) across
+  heartbeat, wave, scope, matrix, terrain, retro, rain, binary,
+  butterfly, scatter, fire, sakura, ripples, and the bar family.
+  Pulse, Firework, Tunnel, Vortex, Plasma, Metaballs, and Moire left
+  alone on purpose — their onset-detection or texture-evolution math
+  depends on slower envelopes.
+- **Settings-tab sign-in copy.** Reads `Press `a` to sign in — opens
+  Spotify in your browser.` for the active case, with tailored
+  variants for re-auth and scope-insufficient states. Headless / SSH
+  users see a pending-state hint that still points at the `clitunes
+  auth` subcommand as a fallback since the browser path may not
+  work remotely.
+
+### Fixed
+
+- **Client recovers from mid-flow daemon crash.** The Settings tab
+  no longer gets stuck in "Opening browser…" forever if the daemon
+  dies between `AuthStarted` and `AuthCompleted`.
+- **Control-session reconnect clears stale auth state.** On
+  daemon-reconnect the client drops the in-progress flag and
+  re-issues `Verb::ReadConfig`, so the Settings tab reflects the
+  daemon's actual view instead of a phantom pending flow.
+
 ## [1.1.0] - 2026-04-18
 
 ### Added

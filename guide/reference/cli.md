@@ -86,11 +86,39 @@ Runs the Spotify OAuth flow and caches credentials. See
 |-----|--------|
 | `n` | Next visualiser |
 | `p` | Previous visualiser |
+| `:` | Open command bar (jump to a visualiser by name) |
 | `Up` / `k` | Move picker selection up |
 | `Down` / `j` | Move picker selection down |
 | `Enter` | Confirm picker selection |
 | `s` | Show / hide station picker |
 | `q` / `Esc` | Quit |
+
+## Jumping to a visualiser by name
+
+Press `:` anywhere in the full TUI (when the station picker is hidden, or
+when it is visible but not focused on the Search tab) to open a command
+bar at the bottom of the screen. Type a visualiser name — partial or
+fuzzy matches work — and press `Enter` to jump straight there.
+
+```
+:sak          → sakura
+:hrt          → heartbeat
+:fire         → fire
+:viz sakura   → same as :sak (explicit `viz` prefix, optional)
+```
+
+If multiple candidates tie on score (e.g. `:b` matches `barsdot`,
+`barsoutline`, `binary`, `butterfly` equally), `Enter` does not submit —
+the bar shows the candidates and waits for you to refine the query.
+
+`Esc` cancels without jumping. `Backspace` edits the buffer. The bar
+stays open briefly after `Enter` (~250 ms) awaiting the daemon's
+acknowledgement; if the daemon is slow or offline, an inline "daemon
+not responding" hint surfaces so you know the jump didn't happen.
+
+Command-bar input is full-TUI only. Pane mode (`clitunes --pane
+visualiser`) has no command bar; use `clitunes viz <name>` from another
+terminal to jump there.
 
 ## Visualisers
 

@@ -18,14 +18,47 @@ use clitunes_engine::tui::picker::{
     key_from_bytes, load_curated, paint_picker, CuratedList, CuratedLoadOutcome, PickerAction,
     PickerKey, PickerState, PickerTab, PickerTransition,
 };
-use clitunes_engine::tui::theme::Theme;
+use clitunes_engine::tui::theme::{Theme, Token};
 
-use crate::client::transition_controller::TransitionController;
 use clitunes_engine::visualiser::{
-    AnsiWriter, BarsDot, BarsOutline, Binary, Butterfly, CellGrid, ClassicPeak, Fire, Firework,
-    Heartbeat, Matrix, Metaballs, Moire, Plasma, Pulse, Rain, Retro, Ripples, Sakura, Scatter,
-    Scope, Terrain, TuiContext, Tunnel, Visualiser, Vortex, Wave,
+    AnsiWriter, BarsDot, BarsOutline, Binary, Butterfly, Cell, CellGrid, ClassicPeak, Fire,
+    Firework, Heartbeat, Matrix, Metaballs, Moire, Plasma, Pulse, Rain, Retro, Rgb, Ripples,
+    Sakura, Scatter, Scope, Terrain, TuiContext, Tunnel, Visualiser, Vortex, Wave,
 };
+
+use crate::client::command_bar::{CommandBarAction, CommandBarState};
+use crate::client::transition_controller::TransitionController;
+
+/// The 23-mode visualiser catalogue in exact carousel registration order.
+/// Must stay in lock-step with the `visualisers` vector in [`AppState::new`]
+/// — the debug-assert there pins the invariant. The fuzzy matcher uses
+/// registration order as its tie-breaker, so this ordering is part of the
+/// user-observable contract of `:viz <name>` jumps.
+const VIZ_CATALOGUE: &[&str] = &[
+    "plasma",
+    "ripples",
+    "tunnel",
+    "metaballs",
+    "vortex",
+    "fire",
+    "matrix",
+    "moire",
+    "wave",
+    "scope",
+    "heartbeat",
+    "classicpeak",
+    "barsdot",
+    "barsoutline",
+    "binary",
+    "scatter",
+    "terrain",
+    "butterfly",
+    "pulse",
+    "rain",
+    "sakura",
+    "firework",
+    "retro",
+];
 
 /// FFT window size. 2048 samples at 48 kHz gives ~43 ms windows and
 /// 1024 frequency bins — standard for music visualisation, balancing
@@ -88,6 +121,11 @@ struct AppState {
     /// painted in the top-right of the grid when a cover is loaded.
     album_art: AlbumArtState,
     now_playing: NowPlayingState,
+    /// `:` command bar — opens on `:` when no other modal is eating the
+    /// key. Submits `Verb::Viz` via the outer run loop on Enter; stays
+    /// open dimmed until `Event::VizChanged` acks the switch or the
+    /// 250 ms timeout elapses.
+    command_bar: CommandBarState,
 }
 
 impl AppState {
@@ -122,6 +160,19 @@ impl AppState {
         ];
         let active_idx = 0; // Plasma — the strongest first impression.
 
+        debug_assert_eq!(
+            visualisers.len(),
+            VIZ_CATALOGUE.len(),
+            "VIZ_CATALOGUE must mirror the carousel registration order"
+        );
+        debug_assert!(
+            visualisers
+                .iter()
+                .zip(VIZ_CATALOGUE.iter())
+                .all(|(v, name)| v.id().as_str() == *name),
+            "VIZ_CATALOGUE entries must match visualisers[i].id().as_str() in order"
+        );
+
         Self {
             grid: CellGrid::new(cells_w, cells_h),
             visualisers,
@@ -140,6 +191,7 @@ impl AppState {
             pending_search: None,
             album_art: AlbumArtState::new(),
             now_playing: NowPlayingState::default(),
+            command_bar: CommandBarState::new(VIZ_CATALOGUE),
         }
     }
 
@@ -167,6 +219,9 @@ impl AppState {
                         .start_viz_switch(&self.grid, idx > self.active_idx);
                     self.active_idx = idx;
                 }
+                // Close the command bar if its pending submit matches.
+                // Safe to call unconditionally — no-ops when not pending.
+                self.command_bar.on_viz_changed(name);
             }
             Event::StateChanged {
                 source: Some(source),
@@ -268,6 +323,40 @@ impl AppState {
         if self.quit_fade.is_input_blocked() {
             return false;
         }
+
+        // If the command bar is active, route everything through it.
+        // Submit is translated into a Verb::Viz dispatch below. Cancel
+        // and Still return immediately.
+        if self.command_bar.is_active() {
+            if let AppKey::Picker(pk) = key {
+                match self.command_bar.handle_key(pk, Instant::now()) {
+                    CommandBarAction::Submit(name) => {
+                        if let Err(e) = verb_tx.try_send(Verb::Viz { name: name.clone() }) {
+                            tracing::error!(
+                                target: "clitunes",
+                                error = %e,
+                                %name,
+                                "command bar: failed to send viz verb"
+                            );
+                            self.command_bar.set_error("queue full — try again");
+                        }
+                    }
+                    CommandBarAction::Cancel | CommandBarAction::Still => {}
+                }
+            }
+            return false;
+        }
+
+        // `:` opens the command bar, with the same gating predicate as
+        // `n`/`p`: picker hidden, OR picker visible but not on the Search
+        // tab (where printable ASCII is consumed by the search query).
+        if matches!(key, AppKey::Picker(PickerKey::Char(':')))
+            && (!self.picker_state.visible || self.picker_state.active_tab != PickerTab::Search)
+        {
+            self.command_bar.open();
+            return false;
+        }
+
         // `n`/`p` as viz nav collide with typing into the Search tab.
         // When the Search tab has focus, the `Char` goes to the picker;
         // otherwise we translate them back into viz-nav events.
@@ -600,6 +689,32 @@ impl RenderLoop {
             state.error_pulse.tick();
             state.breathing.tick();
 
+            // Bottom-row ownership. This block paints after the
+            // now-playing strip and the picker modal, so the visual
+            // priority ends up as:
+            //
+            //     command_bar (when active)
+            //   > status_hint (when no modal + no now-playing)
+            //   > now-playing strip (when track info present)
+            //   > picker modal (when visible)
+            //   > bare visualiser frame
+            //
+            // (The picker is a fullscreen modal, not a bottom-row fight,
+            // so "beats picker" here means the bar's row is drawn after
+            // the picker paint — the command bar overwrites that single
+            // row of picker chrome.)
+            state.command_bar.tick(Instant::now());
+            if state.command_bar.is_active() {
+                paint_command_bar(&mut state.grid, &state.command_bar, &state.theme);
+            } else if !state.picker_state.visible
+                && state.now_playing.artist.is_none()
+                && state.now_playing.title.is_none()
+            {
+                // First-run discoverability affordance — ghosts over
+                // whatever the visualiser painted in the bottom row.
+                paint_status_hint(&mut state.grid);
+            }
+
             // Quit fade (last — overrides everything).
             if state.quit_fade.is_active() {
                 state.quit_fade.apply(&mut state.grid);
@@ -757,6 +872,194 @@ fn visualiser_cell_rect() -> (u16, u16) {
     let cols = term_cols.saturating_sub(1).max(20);
     let rows = term_rows.saturating_sub(2).max(10);
     (cols, rows)
+}
+
+/// Paint the `:` command bar at the bottom row. Overwrites whatever the
+/// now-playing strip or status hint put there. Format:
+///
+/// ```text
+/// : <buffer>|  <right-side hint>
+/// ```
+///
+/// Cursor glyph is actually `│` (U+2502) — shown as `|` above so rustdoc
+/// doesn't try to parse this block as Rust. The right-side hint shows
+/// `(no match)`, a disambiguation list, a dimmed `submitting...` while
+/// awaiting ack, or the last error message. Truncates inline hints that
+/// won't fit rather than flooding the row.
+fn paint_command_bar(grid: &mut CellGrid, bar: &CommandBarState, theme: &Theme) {
+    let width = grid.width();
+    let height = grid.height();
+    if width == 0 || height == 0 {
+        return;
+    }
+    let row = height - 1;
+
+    // Background: solid dim backdrop so the bar is visible over whatever
+    // the visualiser is painting underneath.
+    let bg = theme.get(Token::Surface);
+    let prompt_fg = theme.get(Token::Accent);
+    let text_fg = theme.get(Token::ForegroundBright);
+    let cursor_fg = theme.get(Token::AccentHover);
+    let hint_fg = theme.get(Token::ForegroundDim);
+    let dim_fg = theme.get(Token::Muted);
+
+    // Clear the row first.
+    for x in 0..width {
+        grid.set(
+            x,
+            row,
+            Cell {
+                ch: ' ',
+                fg: text_fg,
+                bg,
+            },
+        );
+    }
+
+    // Prompt: ": "
+    let mut x: u16 = 0;
+    if x < width {
+        grid.set(
+            x,
+            row,
+            Cell {
+                ch: ':',
+                fg: prompt_fg,
+                bg,
+            },
+        );
+        x += 1;
+    }
+    if x < width {
+        grid.set(
+            x,
+            row,
+            Cell {
+                ch: ' ',
+                fg: text_fg,
+                bg,
+            },
+        );
+        x += 1;
+    }
+
+    // Buffer text + cursor. The cursor is rendered as the character at
+    // cursor_pos with a brighter fg; when cursor == buffer.len() we append
+    // a pipe glyph.
+    let buffer = bar.buffer();
+    let cursor_byte = bar.cursor();
+    let submitting = bar.pending_submit().is_some();
+    for (byte_idx, ch) in buffer.char_indices() {
+        if x >= width {
+            break;
+        }
+        let at_cursor = byte_idx == cursor_byte;
+        grid.set(
+            x,
+            row,
+            Cell {
+                ch,
+                fg: if submitting {
+                    dim_fg
+                } else if at_cursor {
+                    cursor_fg
+                } else {
+                    text_fg
+                },
+                bg,
+            },
+        );
+        x += 1;
+    }
+    // Trailing cursor (when cursor_byte == buffer.len()).
+    if !submitting && cursor_byte == buffer.len() && x < width {
+        grid.set(
+            x,
+            row,
+            Cell {
+                ch: '│',
+                fg: cursor_fg,
+                bg,
+            },
+        );
+        x += 1;
+    }
+
+    // Right-side hint.
+    let hint = if submitting {
+        Some(String::from("submitting…"))
+    } else {
+        bar.last_error().map(|s| s.to_string())
+    };
+    if let Some(hint) = hint {
+        let padded = format!("  {hint}");
+        let hint_chars: Vec<char> = padded.chars().collect();
+        // Place flush-right when it fits; otherwise inline after the
+        // buffer with truncation.
+        let hint_w = hint_chars.len() as u16;
+        let start_x = if width > hint_w && x + 2 <= width - hint_w {
+            width - hint_w
+        } else {
+            (x + 1).min(width.saturating_sub(1))
+        };
+        for (hx, ch) in (start_x..).zip(hint_chars) {
+            if hx >= width {
+                break;
+            }
+            grid.set(
+                hx,
+                row,
+                Cell {
+                    ch,
+                    fg: hint_fg,
+                    bg,
+                },
+            );
+        }
+    }
+}
+
+/// Paint a dim one-line hint at the bottom row reminding the user of the
+/// top-level keybindings. Called only when no other modal wants the row
+/// (no command bar, no picker overlay, no now-playing strip yet). This
+/// is the discoverability affordance for `:` (R8 of the plan).
+fn paint_status_hint(grid: &mut CellGrid) {
+    let width = grid.width();
+    let height = grid.height();
+    if width == 0 || height == 0 {
+        return;
+    }
+    let row = height - 1;
+    let text = if width >= 40 {
+        ":jump  n/p cycle  s picker  q quit"
+    } else {
+        ":  n  s  q"
+    };
+    // Dim grey over the existing visualiser-painted row. We skip clearing
+    // so the vis remains faintly visible behind — keeps the hint from
+    // feeling like a heavy chrome bar.
+    let fg = Rgb::new(110, 110, 118);
+    for (x, ch) in (0_u16..).zip(text.chars()) {
+        if x >= width {
+            break;
+        }
+        // Preserve existing bg colour from the visualiser so the hint
+        // ghosts over the frame rather than stamping a black strip.
+        let existing_bg = grid
+            .cells()
+            .get((row as usize) * (width as usize) + (x as usize))
+            .map(|c| c.bg)
+            .unwrap_or(Rgb::BLACK);
+        grid.set(
+            x,
+            row,
+            Cell {
+                ch,
+                fg,
+                bg: existing_bg,
+            },
+        );
+    }
 }
 
 fn terminal_size() -> Option<(u16, u16)> {

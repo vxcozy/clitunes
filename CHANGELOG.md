@@ -5,6 +5,28 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Removed
+
+- **Four visualiser variants (`Auralis`, `Starfield`, `Tideline`, `Cascade`)
+  that were declared in the `VisualiserId` enum but never registered in
+  the TUI carousel.** These were early GPU-heavy designs superseded by
+  the pure-CPU rendering approach. The v1.0.0 CHANGELOG and README
+  advertised them as part of the "Spectrum / core" family, but the
+  active carousel only contained 23 reachable modes — the other four
+  were dead code behind a stable-looking name. Removing them closes
+  the gap between what ships and what the docs claim.
+
+### Changed
+
+- **Default visualiser corrected to Plasma in all docs.** The code has
+  defaulted to Plasma (`active_idx = 0`) since v1.0.0, but the README and
+  tutorial materials said "Auralis (default)" — a pre-existing
+  documentation bug surfaced during v1.3 planning. README, CHANGELOG
+  (below), `guide/tutorials/getting-started.md`, `guide/how-to/embed-panes.md`,
+  and `guide/explanation/visualisers.md` now all say Plasma.
+
 ## [1.0.0] - 2026-04-17
 
 First public release.
@@ -35,8 +57,8 @@ Twenty-three real-time visualisers reactive to the audio spectrum, rendered
 at 30 fps using half-block ANSI, density-ramp glyphs, or Unicode braille
 sub-pixels (terminal 24-bit colour required):
 
-- **Spectrum / core:** Auralis, Tideline, Cascade, Plasma, Ripples, Tunnel,
-  Metaballs, Starfield, Fire, Matrix, Moire, Vortex
+- **Spectrum / core:** Plasma (default), Ripples, Tunnel, Metaballs, Fire,
+  Matrix, Moire, Vortex
 - **Oscilloscope (braille):** Wave, Scope, Heartbeat
 - **Spectrum variants:** ClassicPeak, BarsDot, BarsOutline, Binary
 - **Particle / field:** Scatter, Terrain, Butterfly, Pulse

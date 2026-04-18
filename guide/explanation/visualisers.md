@@ -12,28 +12,32 @@ The `FftTap` produces a frequency-domain snapshot from the PCM ring at ~30 fps.
 Each visualiser reads the snapshot's magnitude bins, peak energy, and bass/mid/high
 band levels to drive its animation.
 
-## Why eight visualisers?
+## Why twenty-three visualisers?
 
 clitunes aims to be the "Ghostty of TUI music apps" — a tool where the visual
 experience is a first-class feature, not an afterthought. Different music
-calls for different aesthetics:
+calls for different aesthetics. The catalogue spans four rendering families;
+a sampler of each:
 
 | Visualiser | Character | Best with |
 |------------|-----------|-----------|
-| **Auralis** | Energetic, colorful | Electronic, pop, anything with dynamic range |
-| **Tideline** | Minimal, fluid | Ambient, classical, contemplative listening |
-| **Cascade** | Analytical, scrolling | Anything — it's a spectrogram, useful for seeing structure |
-| **Plasma** | Psychedelic, warm | Bass-heavy genres, downtempo |
+| **Plasma** | Psychedelic, warm (default) | Bass-heavy genres, downtempo |
 | **Ripples** | Rhythmic, expanding | Percussion-forward music, jazz |
 | **Tunnel** | Hypnotic, depth | Mid-range-rich music, vocals |
 | **Metaballs** | Organic, morphing | Experimental, textural music |
-| **Starfield** | Spacious, accelerating | High-energy music, builds and drops |
+| **Wave** | Braille oscilloscope | Anything — a clean signal view |
+| **ClassicPeak** | Winamp-style bars | Dynamic-range-rich music |
+| **Sakura** | Cherry blossom particles | Ambient, contemplative listening |
+| **Retro** | 80s synthwave scene | Driving, atmospheric music |
+
+See `guide/reference/cli.md` for the full catalogue.
 
 ## CPU-only by design
 
 All visualisers are pure-CPU implementations using Unicode half-block
-characters (`▀`) with 24-bit ANSI color. Each cell in the grid encodes two
-vertical pixels — foreground color for the top half, background for the bottom.
+characters (`▀`), density-ramp glyphs (`.,:;+*#%@`), or braille sub-pixels
+(U+2800 block for 2×4 dots per cell) with 24-bit ANSI color. Each cell in
+the grid carries a foreground + background colour and a glyph.
 
 This was a deliberate choice after the Phase 0 spike showed that GPU rendering
 via wgpu + Kitty graphics protocol was slower in practice due to readback

@@ -24,7 +24,7 @@ length: **65,536 bytes** — connections sending oversized lines are disconnecte
 On connect the daemon sends its banner immediately:
 
 ```json
-{"version":"clitunes-control-1","capabilities":["radio","local","viz_auralis","viz_tideline"]}
+{"version":"clitunes-control-1","capabilities":["radio","local","viz_plasma","viz_ripples"]}
 ```
 
 The client responds:
@@ -56,7 +56,7 @@ client can correlate request/response.
 | `prev` | — | Go to previous track |
 | `volume` | `{"level": 0..100}` | Set output volume |
 | `source` | `{"type":"local","path":"..."}` or `{"type":"radio","uuid":"..."}` or `{"type":"spotify","uri":"..."}` | Switch source |
-| `viz` | `{"name": "auralis"}` | Switch visualiser |
+| `viz` | `{"name": "plasma"}` | Switch visualiser |
 | `layout` | `{"name": "default"}` | Switch layout |
 | `picker` | — | Show the curated picker overlay |
 | `status` | — | Request a one-shot status snapshot |

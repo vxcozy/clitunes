@@ -16,9 +16,12 @@ in your terminal.
 Pick one:
 
 ```
-brew install vxcozy/tap/clitunes    # Homebrew (macOS)
-cargo install clitunes              # from crates.io
+brew install vxcozy/tap/clitunes                                              # Homebrew (macOS + Linux)
+cargo install --git https://github.com/vxcozy/clitunes --tag v1.0.0 --locked  # Cargo
 ```
+
+Plain `cargo install clitunes` from crates.io is pending the next upstream
+librespot release.
 
 Or build from source:
 
@@ -35,7 +38,7 @@ clitunes
 ```
 
 On first run, clitunes auto-starts its daemon (`clitunesd`) and shows a station
-picker over the Auralis visualiser:
+picker over the default Plasma visualiser:
 
 ```
 ╭──────────────────────────────────────────╮
@@ -48,7 +51,7 @@ picker over the Auralis visualiser:
 │  ...                                     │
 │                                          │
 │  ↑/↓ move   enter select   s hide   q   │
-│  n/p cycle viz · auralis · tideline      │
+│  n/p cycle viz · plasma · ripples        │
 ╰──────────────────────────────────────────╯
 ```
 
@@ -57,21 +60,24 @@ streaming and the visualiser responds to the music.
 
 ## Explore visualisers
 
-Press **n** to cycle to the next visualiser, **p** to go back. There are eight:
+Press **n** to cycle to the next visualiser, **p** to go back. Twenty-three
+visualisers ship with v1 across four families — a sampler:
 
-1. **Auralis** — vertical frequency bands (default)
-2. **Tideline** — horizontal waveform
-3. **Cascade** — waterfall spectrogram
-4. **Plasma** — bass-modulated plasma field
-5. **Ripples** — concentric rings on beat transients
-6. **Tunnel** — fly-through depth effect
-7. **Metaballs** — merging/splitting blobs
-8. **Starfield** — depth-sorted stars
+1. **Plasma** — bass-modulated plasma field (default)
+2. **Ripples** — concentric rings on beat transients
+3. **Tunnel** — fly-through depth effect
+4. **Metaballs** — merging/splitting blobs
+5. **Wave** — braille oscilloscope
+6. **Fire** — flickering flame simulation
+7. **Matrix** — falling green glyphs
+8. **Sakura** — cherry blossom petals (particle scene)
+
+See `guide/reference/cli.md` for the full catalogue.
 
 Or switch directly from another terminal:
 
 ```
-clitunes viz cascade
+clitunes viz plasma
 ```
 
 ## Control playback

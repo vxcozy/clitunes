@@ -1,8 +1,9 @@
 //! Curated taste-neutral station picker (Unit 8).
 //!
 //! The picker is the first thing a new user sees: a modal overlay
-//! painted over the Auralis calibration tone, listing 8–15 curated
-//! stations that span genres without reflecting the engineer's taste.
+//! painted over the calibration tone's default visualiser, listing
+//! 8–15 curated stations that span genres without reflecting the
+//! engineer's taste.
 //!
 //! # Why "taste-neutral"
 //!

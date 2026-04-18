@@ -1,5 +1,16 @@
 # CLI reference
 
+## Global options
+
+These work alongside any mode:
+
+| Option | Description |
+|--------|-------------|
+| `-h`, `--help` | Print help and exit |
+| `-V`, `--version` | Print version (`clitunes <version>`) and exit |
+
+`clitunesd` accepts the same `-h` / `-V` flags.
+
 ## Modes
 
 ### Full TUI (default)
@@ -85,14 +96,10 @@ Runs the Spotify OAuth flow and caches credentials. See
 
 | Name | Description |
 |------|-------------|
-| `auralis` | Vertical frequency bands with amplitude-driven color (default) |
-| `tideline` | Horizontal waveform with receding shoreline effect |
-| `cascade` | Waterfall spectrogram scrolling downward |
-| `plasma` | Classic plasma field modulated by bass energy |
+| `plasma` | Classic plasma field modulated by bass energy (default) |
 | `ripples` | Concentric rings expanding from beat transients |
 | `tunnel` | Fly-through tunnel warped by mid-range frequencies |
 | `metaballs` | Floating blobs that merge and split with the music |
-| `starfield` | Depth-sorted stars accelerated by audio intensity |
 | `fire` | Cellular automaton fire with audio-driven roar |
 | `matrix` | Falling code rain with beat-synced glitch bursts |
 | `moire` | Overlapping interference patterns pulsing with bass |

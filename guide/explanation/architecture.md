@@ -55,9 +55,11 @@ sample rate, channel count, and ring capacity.
 
 ## Visualiser rendering
 
-All eight visualisers render to a `CellGrid` — an in-memory grid of half-block
-Unicode cells with 24-bit foreground and background colors. The `AnsiWriter`
-flushes this grid to stdout as ANSI escape sequences at ~30 fps.
+All twenty-three visualisers render to a `CellGrid` — an in-memory grid of
+cells carrying a 24-bit foreground, a 24-bit background, and a glyph (upper-
+half block, density-ramp ASCII, or Unicode braille sub-pixel depending on the
+mode). The `AnsiWriter` flushes this grid to stdout as ANSI escape sequences
+at ~30 fps.
 
 **Why not wgpu/GPU?** An early prototype (the "spike" phase) used wgpu
 rendering with Kitty graphics protocol for terminal display. Per-frame GPU

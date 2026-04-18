@@ -6,14 +6,10 @@ use serde::{Deserialize, Serialize};
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum VisualiserId {
-    Auralis,
     Plasma,
     Ripples,
     Tunnel,
     Metaballs,
-    Starfield,
-    Tideline,
-    Cascade,
     Fire,
     Matrix,
     Moire,
@@ -38,14 +34,10 @@ pub enum VisualiserId {
 impl VisualiserId {
     pub fn as_str(&self) -> &'static str {
         match self {
-            Self::Auralis => "auralis",
             Self::Plasma => "plasma",
             Self::Ripples => "ripples",
             Self::Tunnel => "tunnel",
             Self::Metaballs => "metaballs",
-            Self::Starfield => "starfield",
-            Self::Tideline => "tideline",
-            Self::Cascade => "cascade",
             Self::Fire => "fire",
             Self::Matrix => "matrix",
             Self::Moire => "moire",
@@ -70,14 +62,10 @@ impl VisualiserId {
 
     pub fn parse(s: &str) -> Option<Self> {
         match s {
-            "auralis" => Some(Self::Auralis),
             "plasma" => Some(Self::Plasma),
             "ripples" => Some(Self::Ripples),
             "tunnel" => Some(Self::Tunnel),
             "metaballs" => Some(Self::Metaballs),
-            "starfield" => Some(Self::Starfield),
-            "tideline" => Some(Self::Tideline),
-            "cascade" => Some(Self::Cascade),
             "fire" => Some(Self::Fire),
             "matrix" => Some(Self::Matrix),
             "moire" => Some(Self::Moire),

@@ -512,7 +512,7 @@ impl CliMode {
                 let name = args
                     .get(1)
                     .ok_or_else(|| {
-                        anyhow::anyhow!("viz requires a name (e.g. auralis, cascade, tideline)")
+                        anyhow::anyhow!("viz requires a name (e.g. plasma, matrix, sakura)")
                     })?
                     .clone();
                 Ok(CliMode::Headless(Verb::Viz { name }))
@@ -672,7 +672,7 @@ GLOBAL OPTIONS:
     -V, --version                           Print version and exit
 
 PANE NAMES:
-    visualiser      Fullscreen visualiser (default: auralis, override with --viz)
+    visualiser      Fullscreen visualiser (default: plasma, override with --viz)
     now-playing     Track info strip (1-3 rows)
     mini-spectrum   Unicode block spectrum bars (1 row, for status lines)
 

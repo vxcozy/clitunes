@@ -36,11 +36,6 @@ pub mod spans {
     pub const TUI_PICKER: &str = "tui.picker";
     pub const TUI_LAYOUT: &str = "tui.layout";
 
-    // Visualisers
-    pub const VIZ_AURALIS: &str = "viz.auralis.frame";
-    pub const VIZ_TIDELINE: &str = "viz.tideline.frame";
-    pub const VIZ_CASCADE: &str = "viz.cascade.frame";
-
     // Control bus
     pub const CONTROL_REQUEST: &str = "control.request";
     pub const CONTROL_RESPONSE: &str = "control.response";

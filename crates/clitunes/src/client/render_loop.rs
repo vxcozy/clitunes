@@ -90,6 +90,11 @@ pub struct RenderLoopConfig {
     pub consumer: Box<dyn PcmConsumer>,
     pub sample_rate: u32,
     pub event_rx: std::sync::mpsc::Receiver<Event>,
+    /// Synthetic notifications for conditions that don't map to a wire
+    /// `Event`. Currently used by the reconnect bridge to tell the
+    /// render loop "the daemon socket dropped and came back" so the
+    /// picker can reset any in-flight auth state. Drained every tick.
+    pub reconnect_rx: std::sync::mpsc::Receiver<()>,
     pub verb_tx: tokio::sync::mpsc::Sender<Verb>,
     pub stop: Arc<AtomicBool>,
     pub measure_startup: bool,
@@ -564,6 +569,7 @@ pub struct RenderLoop {
     fft: FftTap,
     sample_rate: u32,
     event_rx: std::sync::mpsc::Receiver<Event>,
+    reconnect_rx: std::sync::mpsc::Receiver<()>,
     verb_tx: tokio::sync::mpsc::Sender<Verb>,
     stop: Arc<AtomicBool>,
     measure_startup: bool,
@@ -577,6 +583,7 @@ impl RenderLoop {
             fft: FftTap::new(FFT_SIZE),
             sample_rate: config.sample_rate,
             event_rx: config.event_rx,
+            reconnect_rx: config.reconnect_rx,
             verb_tx: config.verb_tx,
             stop: config.stop,
             measure_startup: config.measure_startup,
@@ -637,6 +644,26 @@ impl RenderLoop {
                 state.handle_event(&ev, &self.stop);
             }
 
+            // Process reconnect notices from the bridge task. Each
+            // notice means the control socket dropped and came back —
+            // the new daemon (may be a fresh process) has no memory of
+            // our in-flight state, so clear any pending auth and ask
+            // for a fresh `ConfigSnapshot` to repaint the Settings tab.
+            let mut did_reconnect = false;
+            while self.reconnect_rx.try_recv().is_ok() {
+                did_reconnect = true;
+            }
+            if did_reconnect {
+                state.picker_state.handle_daemon_reconnected();
+                if let Err(e) = self.verb_tx.try_send(Verb::ReadConfig) {
+                    tracing::error!(
+                        target: "clitunes",
+                        error = %e,
+                        "reconnect: failed to request fresh config snapshot"
+                    );
+                }
+            }
+
             // Process user input.
             while let Ok(key) = key_rx.try_recv() {
                 if state.handle_key(key, &self.verb_tx) {
@@ -656,6 +683,15 @@ impl RenderLoop {
                         "auth: failed to refresh config after completion"
                     );
                 }
+            }
+
+            // Client-side deadline: unsticks the UI when the daemon
+            // died mid-flow and will never emit AuthCompleted/Failed.
+            if state.picker_state.tick_auth_deadline() {
+                tracing::warn!(
+                    target: "clitunes",
+                    "auth: client-side deadline elapsed with no daemon response"
+                );
             }
 
             // Flush any debounced search query whose window has elapsed.

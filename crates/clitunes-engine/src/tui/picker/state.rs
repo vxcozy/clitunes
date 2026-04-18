@@ -42,11 +42,19 @@
 //! [`PickerAction::PickSpotify`] with the URI, because the picker
 //! doesn't need to know what verb the caller sends.
 
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use clitunes_core::{BrowseItem, LibraryCategory};
 
 use crate::tui::picker::curated_seed::CuratedList;
+
+/// Client-side deadline for an in-flight OAuth flow, measured from the
+/// moment the `a` keybind fires. Set 30 s longer than the daemon's own
+/// 5-minute `AUTH_TIMEOUT` so the daemon's `AuthFailed { reason: "timeout" }`
+/// normally wins the race and surfaces with its specific reason; this
+/// client-side ceiling is the last-resort unstick for a daemon that
+/// died mid-flow and never emits any terminal event.
+pub const AUTH_CLIENT_TIMEOUT: Duration = Duration::from_secs(330);
 
 /// Maximum time between keypresses to count as "rapid" for momentum
 /// (150 ms). Tuned so that holding an arrow key at typical repeat
@@ -217,6 +225,11 @@ pub struct PickerState {
     /// Last `AuthFailed { reason }` from the daemon, shown inline on
     /// the Settings tab until the next `a` press clears it.
     pub auth_error: Option<String>,
+    /// Wall-clock instant at which `auth_in_progress` was last set. The
+    /// render loop uses this with [`AUTH_CLIENT_TIMEOUT`] to unstick
+    /// the UI when the daemon died mid-flow and will never emit a
+    /// terminal `AuthCompleted` / `AuthFailed` event.
+    pub auth_started_at: Option<Instant>,
 
     /// Banner shown in the header when the user's last station has
     /// gone missing. `None` on the happy path.
@@ -243,6 +256,7 @@ impl PickerState {
             settings: None,
             auth_in_progress: false,
             auth_error: None,
+            auth_started_at: None,
             banner: None,
             rapid_count: 0,
             last_nav_at: None,
@@ -294,8 +308,15 @@ impl PickerState {
     /// the render loop when an `AuthStarted` event arrives. Idempotent
     /// with the state already set by the `a` keybind.
     pub fn set_auth_started(&mut self) {
+        self.set_auth_started_at(Instant::now());
+    }
+
+    /// Internal variant that takes the wall-clock instant so tests can
+    /// drive the client-deadline timer deterministically.
+    pub fn set_auth_started_at(&mut self, now: Instant) {
         self.auth_in_progress = true;
         self.auth_error = None;
+        self.auth_started_at = Some(now);
     }
 
     /// Auth flow ended successfully — clear the pending state so the
@@ -303,6 +324,7 @@ impl PickerState {
     pub fn set_auth_completed(&mut self) {
         self.auth_in_progress = false;
         self.auth_error = None;
+        self.auth_started_at = None;
     }
 
     /// Auth flow failed. `reason` is rendered under the status line
@@ -310,6 +332,44 @@ impl PickerState {
     pub fn set_auth_failed(&mut self, reason: String) {
         self.auth_in_progress = false;
         self.auth_error = Some(reason);
+        self.auth_started_at = None;
+    }
+
+    /// Called on every render-loop tick. If an auth flow has been
+    /// pending longer than [`AUTH_CLIENT_TIMEOUT`], flip it to a
+    /// failure so the user isn't stuck staring at "Opening browser…"
+    /// when the daemon crashed mid-flow and will never reply.
+    ///
+    /// Returns `true` when the tick tripped the deadline, so the
+    /// caller can log it.
+    pub fn tick_auth_deadline(&mut self) -> bool {
+        self.tick_auth_deadline_at(Instant::now())
+    }
+
+    /// Deterministic variant for tests.
+    pub fn tick_auth_deadline_at(&mut self, now: Instant) -> bool {
+        if !self.auth_in_progress {
+            return false;
+        }
+        let Some(started) = self.auth_started_at else {
+            return false;
+        };
+        if now.saturating_duration_since(started) < AUTH_CLIENT_TIMEOUT {
+            return false;
+        }
+        self.set_auth_failed("no response from daemon — retry when ready".into());
+        true
+    }
+
+    /// Clear any in-flight auth state after a control-socket reconnect.
+    /// The daemon we just rejoined has a fresh atomic (it may or may
+    /// not be the same process), so the old pending flag is meaningless
+    /// — surface a benign note and let the next `ConfigSnapshot` paint
+    /// the true auth status.
+    pub fn handle_daemon_reconnected(&mut self) {
+        if self.auth_in_progress {
+            self.set_auth_failed("daemon reconnected — retry if needed".into());
+        }
     }
 
     /// Handle a key. Public entry point used by the render loop.
@@ -410,10 +470,12 @@ impl PickerState {
                 if self.auth_in_progress || self.is_logged_in() {
                     return PickerAction::Ignored;
                 }
-                // Clear any stale failure banner so the user sees a
-                // clean "pending" state on their second attempt.
-                self.auth_error = None;
-                self.auth_in_progress = true;
+                // Optimistic: flip to pending immediately so the user
+                // doesn't have to wait for the daemon's `AuthStarted`
+                // event to see feedback. Also starts the client-side
+                // deadline clock — if the daemon never replies,
+                // `tick_auth_deadline` will unstick us.
+                self.set_auth_started();
                 PickerAction::StartAuth
             }
             _ => PickerAction::Ignored,
@@ -836,6 +898,108 @@ mod tests {
         st.set_auth_failed("timeout".into());
         assert!(!st.auth_in_progress);
         assert_eq!(st.auth_error.as_deref(), Some("timeout"));
+    }
+
+    #[test]
+    fn a_keypress_populates_auth_started_at() {
+        let list = baked_list();
+        let mut st = PickerState::new(&list, 0);
+        st.active_tab = PickerTab::Settings;
+        st.set_settings(snapshot_with_status(SettingsAuthStatus::LoggedOut));
+        assert!(st.auth_started_at.is_none());
+        st.handle_key(PickerKey::Char('a'));
+        assert!(
+            st.auth_started_at.is_some(),
+            "a press must start the deadline clock"
+        );
+    }
+
+    #[test]
+    fn tick_auth_deadline_is_noop_when_not_in_progress() {
+        let list = baked_list();
+        let mut st = PickerState::new(&list, 0);
+        assert!(!st.tick_auth_deadline());
+        assert!(st.auth_error.is_none());
+    }
+
+    #[test]
+    fn tick_auth_deadline_is_noop_before_timeout() {
+        let list = baked_list();
+        let mut st = PickerState::new(&list, 0);
+        let t0 = Instant::now();
+        st.set_auth_started_at(t0);
+        // Half a second in — still well inside the 5m30s window.
+        assert!(!st.tick_auth_deadline_at(t0 + Duration::from_millis(500)));
+        assert!(st.auth_in_progress);
+    }
+
+    #[test]
+    fn tick_auth_deadline_trips_after_timeout() {
+        let list = baked_list();
+        let mut st = PickerState::new(&list, 0);
+        let t0 = Instant::now();
+        st.set_auth_started_at(t0);
+        let past = t0 + AUTH_CLIENT_TIMEOUT + Duration::from_secs(1);
+        assert!(st.tick_auth_deadline_at(past));
+        assert!(!st.auth_in_progress, "deadline must clear the pending flag");
+        assert!(
+            st.auth_error
+                .as_deref()
+                .is_some_and(|e| e.contains("no response from daemon")),
+            "deadline must surface a client-side failure reason"
+        );
+        // Re-tick after the deadline fires must not double-fail.
+        assert!(!st.tick_auth_deadline_at(past + Duration::from_secs(60)));
+    }
+
+    #[test]
+    fn daemon_reconnect_clears_pending_auth_with_benign_note() {
+        let list = baked_list();
+        let mut st = PickerState::new(&list, 0);
+        st.active_tab = PickerTab::Settings;
+        st.set_settings(snapshot_with_status(SettingsAuthStatus::LoggedOut));
+        st.handle_key(PickerKey::Char('a'));
+        assert!(st.auth_in_progress);
+        st.handle_daemon_reconnected();
+        assert!(!st.auth_in_progress);
+        assert!(
+            st.auth_error
+                .as_deref()
+                .is_some_and(|e| e.contains("daemon reconnected")),
+            "reconnect note must surface a benign reason"
+        );
+        assert!(
+            st.auth_started_at.is_none(),
+            "reconnect must clear the deadline clock"
+        );
+    }
+
+    #[test]
+    fn daemon_reconnect_is_noop_when_not_in_progress() {
+        let list = baked_list();
+        let mut st = PickerState::new(&list, 0);
+        st.handle_daemon_reconnected();
+        assert!(!st.auth_in_progress);
+        assert!(st.auth_error.is_none());
+    }
+
+    #[test]
+    fn set_auth_completed_clears_deadline_clock() {
+        let list = baked_list();
+        let mut st = PickerState::new(&list, 0);
+        st.set_auth_started();
+        assert!(st.auth_started_at.is_some());
+        st.set_auth_completed();
+        assert!(st.auth_started_at.is_none());
+    }
+
+    #[test]
+    fn set_auth_failed_clears_deadline_clock() {
+        let list = baked_list();
+        let mut st = PickerState::new(&list, 0);
+        st.set_auth_started();
+        st.set_auth_failed("nope".into());
+        assert!(st.auth_started_at.is_none());
     }
 
     #[test]

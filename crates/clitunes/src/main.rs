@@ -258,6 +258,12 @@ async fn run_full_tui(
 
     let (event_tx, event_rx) = std::sync::mpsc::channel::<Event>();
     let (verb_tx, mut verb_rx) = tokio::sync::mpsc::channel::<Verb>(64);
+    // Bridge → render-loop notifier for post-reconnect recovery. The
+    // render loop coalesces drained notices into a single recovery
+    // action per tick, so unbounded is harmless and spares us a
+    // BlockedOnFull edge case if the render loop stalls.
+    let (reconnect_tx, reconnect_rx) = std::sync::mpsc::channel::<()>();
+    session.set_reconnect_notifier(reconnect_tx);
 
     let bridge_stop = Arc::clone(&stop);
     let bridge_state_path = state_path.clone();
@@ -324,6 +330,7 @@ async fn run_full_tui(
             consumer: Box::new(consumer),
             sample_rate,
             event_rx,
+            reconnect_rx,
             verb_tx,
             stop: render_stop,
             measure_startup: startup.is_some(),

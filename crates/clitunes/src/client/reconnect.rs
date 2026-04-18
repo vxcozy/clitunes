@@ -15,6 +15,11 @@ const MAX_RECONNECT_ATTEMPTS: usize = 5;
 pub struct ReconnectingSession {
     session: ControlSession,
     socket_path: PathBuf,
+    /// Fires once per successful reconnect so the render loop can
+    /// rebuild any client-side state that assumed continuity with the
+    /// prior daemon process (e.g. pending Spotify auth). `None` for
+    /// headless callers that don't care.
+    reconnect_notify: Option<std::sync::mpsc::Sender<()>>,
 }
 
 impl ReconnectingSession {
@@ -23,7 +28,15 @@ impl ReconnectingSession {
         Ok(Self {
             session,
             socket_path,
+            reconnect_notify: None,
         })
+    }
+
+    /// Install a reconnect notifier. Called by the TUI bridge so the
+    /// render loop can react to socket drops that survived auto-spawn
+    /// recovery. Headless paths leave this unset.
+    pub fn set_reconnect_notifier(&mut self, tx: std::sync::mpsc::Sender<()>) {
+        self.reconnect_notify = Some(tx);
     }
 
     pub async fn send_verb(&mut self, verb: Verb) -> Result<()> {
@@ -72,6 +85,11 @@ impl ReconnectingSession {
                         Ok(session) => {
                             self.session = session;
                             tracing::info!(target: "clitunes", attempt, "reconnected to daemon");
+                            if let Some(tx) = self.reconnect_notify.as_ref() {
+                                // Best-effort: the render loop may have
+                                // dropped the receiver during shutdown.
+                                let _ = tx.send(());
+                            }
                             return Ok(());
                         }
                         Err(e) => {

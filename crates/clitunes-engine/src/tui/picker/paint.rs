@@ -652,6 +652,12 @@ fn paint_settings_body(
         // re-running `clitunes auth` would race the daemon, so only
         // show the progress line.
         if auth_in_progress {
+            // Two rows: primary status then a secondary hint pointing
+            // SSH/headless users at the sibling CLI, since the daemon
+            // can't surface the OAuth URL through the TUI today (see
+            // TODO(librespot-oauth) in sources/spotify/auth.rs). The
+            // sibling CLI runs in the same process as the user's
+            // terminal so it can print the URL directly.
             write_centered(
                 grid,
                 inner_x0,
@@ -661,6 +667,19 @@ fn paint_settings_body(
                 accent,
                 surface,
             );
+            let hint_row = row.saturating_add(1);
+            if hint_row < rows_end {
+                write_centered(
+                    grid,
+                    inner_x0,
+                    inner_w,
+                    hint_row,
+                    "Headless? Cancel and run `clitunes auth` from a shell.",
+                    body_dim_fg,
+                    surface,
+                );
+                row = hint_row;
+            }
         } else {
             let instruction = match snap.auth_status {
                 SettingsAuthStatus::LoggedIn => "Press `a` to refresh scopes or switch accounts.",
@@ -1127,6 +1146,23 @@ mod tests {
         assert!(
             !text.contains("Press `a` to sign in"),
             "pending state should replace the sign-in hint"
+        );
+    }
+
+    #[test]
+    fn paint_picker_settings_tab_pending_state_shows_headless_fallback_hint() {
+        let mut grid = CellGrid::new(120, 40);
+        let list = baked_list();
+        let theme = default_theme();
+        let mut state = PickerState::new(&list, 0);
+        state.active_tab = PickerTab::Settings;
+        state.set_settings(sample_settings_snapshot(SettingsAuthStatus::LoggedOut));
+        state.set_auth_started();
+        let _rect = paint_picker(&mut grid, &list, &state, &theme).expect("rect");
+        let text: String = grid.cells().iter().map(|c| c.ch).collect();
+        assert!(
+            text.contains("clitunes auth"),
+            "pending state should point headless users at the sibling CLI"
         );
     }
 

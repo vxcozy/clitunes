@@ -336,6 +336,16 @@ fn print_headless_instructions() {
 /// Run the OAuth2 PKCE flow via librespot-oauth. Listens on
 /// `127.0.0.1:8898` for the redirect callback. When `open_browser`
 /// is true, also opens the auth URL in the default browser.
+//
+// TODO(librespot-oauth): upstream a public API that exposes the PKCE
+// authorize URL so the daemon can emit it to the TUI client. Today
+// `OAuthClient::set_auth_url` is private and generates the CSRF token
+// and PKCE challenge internally, which means we can't reconstruct the
+// exact URL from outside the crate — any URL we build would have a
+// different `state` and `code_challenge` than the one librespot's
+// listener is waiting to exchange, so the user's browser redirect
+// would fail PKCE validation. See
+// https://github.com/librespot-org/librespot/tree/dev/oauth
 fn run_oauth_flow(open_browser: bool) -> Result<OAuthToken, OAuthError> {
     let client_id = spotify_client_id();
     let mut builder =

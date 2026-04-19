@@ -92,6 +92,74 @@ fn mag_to_db(mag: f32) -> f32 {
     20.0 * mag.max(1e-6).log10()
 }
 
+/// Envelope-follower AGC over raw PCM sample amplitudes.
+///
+/// Sibling to [`SpectrumScaler`] for viz that draw from `fft.samples`
+/// (bipolar `[-1, 1]`) rather than spectrum magnitudes. Same attack /
+/// release philosophy — fast attack so transients punch through, slow
+/// release so the gain ceiling doesn't strobe on brief dips. Tracks the
+/// peak absolute amplitude across recent frames and scales samples
+/// against it so a 0.05-peak listening volume still fills most of the
+/// available visual range instead of flatlining at one pixel (CLI-89 /
+/// CLI-97).
+#[derive(Clone, Copy, Debug)]
+pub struct SampleScaler {
+    peak: f32,
+}
+
+/// Lower bound on the tracked peak. A typical quiet listening level
+/// sits around 0.03–0.05 on the peak sample; this floor keeps the
+/// envelope from auto-gaining silence into full-scale spikes while
+/// still letting the trace breathe at realistic volumes.
+const SAMPLE_MIN_PEAK: f32 = 0.03;
+
+/// Coefficient on the per-frame peak when updating the envelope.
+/// `1 - exp(-dt / tau)` with dt ≈ 33 ms, tau ≈ 25 ms.
+const SAMPLE_ATTACK: f32 = 0.735;
+
+/// Release coefficient: dt ≈ 33 ms, tau ≈ 800 ms.
+const SAMPLE_RELEASE: f32 = 0.04;
+
+impl SampleScaler {
+    pub fn new() -> Self {
+        Self {
+            peak: SAMPLE_MIN_PEAK,
+        }
+    }
+
+    /// Advance the follower from a frame's worth of bipolar samples.
+    /// Call once per render frame before `normalise`.
+    pub fn update(&mut self, samples: &[f32]) {
+        let frame_peak = samples
+            .iter()
+            .fold(0.0_f32, |acc, s| acc.max(s.abs()))
+            .max(SAMPLE_MIN_PEAK);
+        let coeff = if frame_peak > self.peak {
+            SAMPLE_ATTACK
+        } else {
+            SAMPLE_RELEASE
+        };
+        self.peak += coeff * (frame_peak - self.peak);
+    }
+
+    /// Scale a single bipolar sample to `[-1, 1]` against the tracked
+    /// peak. Preserves sign so trace shape survives.
+    pub fn normalise(&self, sample: f32) -> f32 {
+        (sample / self.peak).clamp(-1.0, 1.0)
+    }
+
+    #[cfg(test)]
+    pub fn peak(&self) -> f32 {
+        self.peak
+    }
+}
+
+impl Default for SampleScaler {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -215,6 +283,83 @@ mod tests {
             scaler.peak_db() >= MIN_PEAK_DB - 1e-3,
             "silence must not push peak below MIN_PEAK_DB floor, got {}",
             scaler.peak_db()
+        );
+    }
+
+    fn converge_samples(scaler: &mut SampleScaler, peak: f32) {
+        let frame = vec![peak; 256];
+        for _ in 0..240 {
+            scaler.update(&frame);
+        }
+    }
+
+    #[test]
+    fn sample_scaler_quiet_signal_fills_majority_of_range() {
+        // Typical quiet listening ≈ 0.05 peak sample. After the envelope
+        // converges, that sample should scale to ≥0.8 so the trace
+        // covers a healthy slice of the pane instead of one pixel.
+        let mut scaler = SampleScaler::new();
+        converge_samples(&mut scaler, 0.05);
+        let out = scaler.normalise(0.05);
+        assert!(
+            out >= 0.8,
+            "quiet 0.05 sample should scale ≥0.8 after AGC, got {out}"
+        );
+    }
+
+    #[test]
+    fn sample_scaler_preserves_sign() {
+        let mut scaler = SampleScaler::new();
+        converge_samples(&mut scaler, 0.3);
+        let pos = scaler.normalise(0.15);
+        let neg = scaler.normalise(-0.15);
+        assert!(pos > 0.0 && neg < 0.0, "sign must survive: {pos}, {neg}");
+        assert!(
+            (pos + neg).abs() < 1e-4,
+            "magnitudes should mirror: {pos} vs {neg}"
+        );
+    }
+
+    #[test]
+    fn sample_scaler_loud_transient_clamps_without_overshoot() {
+        let mut scaler = SampleScaler::new();
+        converge_samples(&mut scaler, 0.3);
+        let out = scaler.normalise(0.3);
+        assert!(
+            (0.8..=1.0).contains(&out),
+            "loud peak should reach ≥0.8 and never overshoot, got {out}"
+        );
+    }
+
+    #[test]
+    fn sample_scaler_silence_does_not_auto_gain() {
+        let mut scaler = SampleScaler::new();
+        converge_samples(&mut scaler, 0.5);
+        for _ in 0..600 {
+            scaler.update(&[0.0; 256]);
+        }
+        assert!(
+            scaler.peak() >= SAMPLE_MIN_PEAK - 1e-6,
+            "silence must not drop peak below floor, got {}",
+            scaler.peak()
+        );
+    }
+
+    #[test]
+    fn sample_scaler_attack_faster_than_release() {
+        let mut rising = SampleScaler::new();
+        rising.update(&[0.5; 64]);
+        let attack_step = rising.peak() - SAMPLE_MIN_PEAK;
+
+        let mut falling = SampleScaler::new();
+        converge_samples(&mut falling, 0.5);
+        let start = falling.peak();
+        falling.update(&[0.0; 64]);
+        let release_step = start - falling.peak();
+
+        assert!(
+            attack_step > release_step * 3.0,
+            "attack should outpace release; attack={attack_step} release={release_step}"
         );
     }
 }

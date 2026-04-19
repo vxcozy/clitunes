@@ -27,7 +27,6 @@ pub enum VisualiserId {
     Pulse,
     Rain,
     Sakura,
-    Firework,
     Retro,
 }
 
@@ -55,7 +54,6 @@ impl VisualiserId {
             Self::Pulse => "pulse",
             Self::Rain => "rain",
             Self::Sakura => "sakura",
-            Self::Firework => "firework",
             Self::Retro => "retro",
         }
     }
@@ -83,7 +81,6 @@ impl VisualiserId {
             "pulse" => Some(Self::Pulse),
             "rain" => Some(Self::Rain),
             "sakura" => Some(Self::Sakura),
-            "firework" => Some(Self::Firework),
             "retro" => Some(Self::Retro),
             _ => None,
         }

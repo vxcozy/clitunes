@@ -89,7 +89,7 @@ Pick a genre, and audio starts streaming with the default **Plasma** visualiser.
 
 ## Visualisers
 
-Twenty-three visualisers ship with v1, all reactive to the audio spectrum.
+Twenty-two visualisers ship with v1, all reactive to the audio spectrum.
 They fall into four families:
 
 - **Spectrum / core** — Plasma (default), Ripples, Tunnel, Metaballs,
@@ -97,7 +97,7 @@ They fall into four families:
 - **Oscilloscopes (braille)** — Wave, Scope, Heartbeat
 - **Spectrum variants** — ClassicPeak, BarsDot, BarsOutline, Binary
 - **Particle / scene** — Scatter, Terrain, Butterfly, Pulse, Rain, Sakura,
-  Firework, Retro
+  Retro
 
 Cycle through them with `n`/`p` or switch directly: `clitunes viz sakura`.
 Full catalogue and rendering notes in

@@ -22,14 +22,14 @@ use clitunes_engine::tui::theme::{Theme, Token};
 
 use clitunes_engine::visualiser::{
     AnsiWriter, BarsDot, BarsOutline, Binary, Butterfly, Cell, CellGrid, ClassicPeak, Fire,
-    Firework, Heartbeat, Matrix, Metaballs, Moire, Plasma, Pulse, Rain, Retro, Rgb, Ripples,
-    Sakura, Scatter, Scope, Terrain, TuiContext, Tunnel, Visualiser, Vortex, Wave,
+    Heartbeat, Matrix, Metaballs, Moire, Plasma, Pulse, Rain, Retro, Rgb, Ripples, Sakura, Scatter,
+    Scope, Terrain, TuiContext, Tunnel, Visualiser, Vortex, Wave,
 };
 
 use crate::client::command_bar::{CommandBarAction, CommandBarState};
 use crate::client::transition_controller::TransitionController;
 
-/// The 23-mode visualiser catalogue in exact carousel registration order.
+/// The 22-mode visualiser catalogue in exact carousel registration order.
 /// Must stay in lock-step with the `visualisers` vector in [`AppState::new`]
 /// — the debug-assert there pins the invariant. The fuzzy matcher uses
 /// registration order as its tie-breaker, so this ordering is part of the
@@ -56,7 +56,6 @@ const VIZ_CATALOGUE: &[&str] = &[
     "pulse",
     "rain",
     "sakura",
-    "firework",
     "retro",
 ];
 
@@ -164,7 +163,6 @@ impl AppState {
             Box::new(Pulse::new()),
             Box::new(Rain::new()),
             Box::new(Sakura::new()),
-            Box::new(Firework::new()),
             Box::new(Retro::new()),
         ];
         let active_idx = 0; // Plasma — the strongest first impression.

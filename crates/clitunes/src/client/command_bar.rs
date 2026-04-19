@@ -329,7 +329,6 @@ mod tests {
         "pulse",
         "rain",
         "sakura",
-        "firework",
         "retro",
     ];
 

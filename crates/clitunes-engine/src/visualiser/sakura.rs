@@ -1,11 +1,16 @@
 use crate::audio::FftSnapshot;
 use crate::visualiser::braille::BrailleBuffer;
 use crate::visualiser::cell_grid::CellGrid;
-use crate::visualiser::energy::EnergyTracker;
 use crate::visualiser::palette::{f32_to_u8, hsv_to_rgb, lerp};
+use crate::visualiser::scaling::SpectrumScaler;
 use crate::visualiser::{Rgb, SurfaceKind, TuiContext, Visualiser, VisualiserId};
 
 const MAX_PETALS: usize = 100;
+
+/// Petals spawned per frame at fully-normalised (≈1.0) intensity.
+/// Chosen so quiet passages after AGC convergence still get a
+/// continuous trickle and loud transients feel genuinely dense.
+const SPAWN_K: f32 = 8.0;
 
 struct Petal {
     x: f32,
@@ -17,7 +22,7 @@ struct Petal {
 }
 
 pub struct Sakura {
-    energy: EnergyTracker,
+    scaler: SpectrumScaler,
     braille: BrailleBuffer,
     petals: Vec<Petal>,
     frame: u32,
@@ -29,9 +34,7 @@ pub struct Sakura {
 impl Sakura {
     pub fn new() -> Self {
         Self {
-            // Release tau ~115 ms so petal emission breathes with the
-            // beat instead of trailing a quarter-second of loudness.
-            energy: EnergyTracker::new(0.4, 0.75, 500.0),
+            scaler: SpectrumScaler::new(),
             braille: BrailleBuffer::new(1, 1),
             petals: Vec::new(),
             frame: 0,
@@ -112,7 +115,14 @@ impl Visualiser for Sakura {
     }
 
     fn render_tui(&mut self, ctx: &mut TuiContext<'_>, fft: &FftSnapshot) {
-        let energy = self.energy.update(fft);
+        // Raw EnergyTracker output reads near-zero at 0.05-peak listening
+        // levels, so `spawn_count = (energy * K) as usize` truncates to
+        // zero and the pane goes black (same class of bug as CLI-89).
+        // Routing the spawn signal through SpectrumScaler puts intensity
+        // in per-frame-peak-normalised units instead.
+        self.scaler.update(&fft.magnitudes);
+        let peak_mag = fft.magnitudes.iter().copied().fold(0.0_f32, f32::max);
+        let intensity = self.scaler.normalise(peak_mag);
         self.frame = self.frame.wrapping_add(1);
 
         let grid: &mut CellGrid = ctx.grid;
@@ -132,8 +142,17 @@ impl Visualiser for Sakura {
         let bw = self.braille.width();
         let bh = self.braille.height();
 
-        // Spawn new petals based on audio energy.
-        let spawn_count = (energy * 3.0) as usize;
+        // Spawn new petals based on normalised spectrum intensity.
+        // Stochastic carry on the fractional remainder keeps the
+        // precipitation continuous at low intensity instead of
+        // rounding down to zero petals per frame.
+        let expected = intensity * SPAWN_K;
+        let base = expected.floor();
+        let frac = expected - base;
+        let mut spawn_count = base as usize;
+        if self.rand_f32() < frac {
+            spawn_count += 1;
+        }
         for _ in 0..spawn_count {
             if self.petals.len() >= MAX_PETALS {
                 break;
@@ -239,5 +258,40 @@ mod tests {
         let mut grid = CellGrid::new(40, 12);
         let mut ctx = TuiContext { grid: &mut grid };
         sakura.render_tui(&mut ctx, &fft);
+    }
+
+    #[test]
+    fn quiet_listening_volume_still_spawns_petals() {
+        // Regression for CLI-97: at ~0.05 sample-peak listening volume,
+        // FFT bin magnitudes are ≈6 and the old `energy * 3.0` gate
+        // truncated to zero — pane went black. After the AGC rewire the
+        // scaler converges, intensity lifts off the floor, and the
+        // stochastic-carry spawn keeps petals raining continuously.
+        let mut sakura = Sakura::new();
+        let mut bands = vec![0.5_f32; 128];
+        bands[3] = 6.4;
+        bands[4] = 5.0;
+        bands[5] = 3.0;
+        let fft = FftSnapshot::new(bands, 48_000, 256);
+        let mut grid = CellGrid::new(40, 12);
+
+        let mut total_spawns: usize = 0;
+        let mut prev_len = sakura.petals.len();
+        for _ in 0..30 {
+            let mut ctx = TuiContext { grid: &mut grid };
+            sakura.render_tui(&mut ctx, &fft);
+            // Count net adds: some petals retire off-screen each frame,
+            // so spawn count = len_after - len_before + retired (≥0).
+            // Lower bound via max(0, delta) is enough for the ≥10 check.
+            let len = sakura.petals.len();
+            if len > prev_len {
+                total_spawns += len - prev_len;
+            }
+            prev_len = len;
+        }
+        assert!(
+            total_spawns >= 10,
+            "expected ≥10 petals over 30 frames at quiet volume, got {total_spawns}"
+        );
     }
 }

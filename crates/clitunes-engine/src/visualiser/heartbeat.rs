@@ -10,11 +10,16 @@ use crate::visualiser::braille::BrailleBuffer;
 use crate::visualiser::cell_grid::CellGrid;
 use crate::visualiser::energy::EnergyTracker;
 use crate::visualiser::palette::f32_to_u8;
+use crate::visualiser::scaling::SampleScaler;
 use crate::visualiser::{Rgb, SurfaceKind, TuiContext, Visualiser, VisualiserId};
 
 pub struct Heartbeat {
     braille: BrailleBuffer,
     energy: EnergyTracker,
+    /// AGC on raw sample amplitudes. Raw samples at ~0.05 peak listening
+    /// levels multiplied by `sample * |sample|` give ~0.0025 — the trace
+    /// flatlines at one pixel without this (CLI-89 / CLI-97 pattern).
+    sample_scaler: SampleScaler,
     history: Vec<f32>,
     last_w: u16,
     last_h: u16,
@@ -27,6 +32,7 @@ impl Heartbeat {
             // Release tau ~115 ms (was ~258 ms): ECG amplitude tracks the
             // beat envelope instead of smearing across multiple pulses.
             energy: EnergyTracker::new(0.5, 0.75, 500.0),
+            sample_scaler: SampleScaler::new(),
             history: Vec::new(),
             last_w: 0,
             last_h: 0,
@@ -78,14 +84,26 @@ impl Visualiser for Heartbeat {
         let sub_h = self.braille.height() as i32;
         let center_y = sub_h / 2;
 
-        // Compute new value from samples: average transformed by sample * |sample|
-        // for ECG-like spikes. Modulate amplitude by energy.
+        // Compute the frame's signed ECG spike on AGC-normalised
+        // samples. Raw amplitudes at typical listening peaks (~0.05)
+        // flatlined the trace — `sample * |sample|` compressed them
+        // to ~0.0025, a one-pixel Y sweep (CLI-89 pattern). The
+        // SampleScaler lifts samples into [-1, 1] before the spike
+        // shape preserves ECG dynamics; energy modulates overall
+        // amplitude so loud beats still punch harder than quiet ones.
+        self.sample_scaler.update(&fft.samples);
         let new_val = if fft.samples.is_empty() {
             0.0
         } else {
-            let sum: f32 = fft.samples.iter().map(|&s| s * s.abs()).sum();
+            let sum: f32 = fft
+                .samples
+                .iter()
+                .map(|&s| {
+                    let n = self.sample_scaler.normalise(s);
+                    n * n.abs()
+                })
+                .sum();
             let avg = sum / fft.samples.len() as f32;
-            // Scale up for visibility and modulate by energy.
             let amplitude_mod = 0.5 + energy * 2.0;
             (avg * amplitude_mod).clamp(-1.0, 1.0)
         };
@@ -254,5 +272,63 @@ mod tests {
             let mut ctx = TuiContext { grid: &mut grid };
             hb.render_tui(&mut ctx, &fft);
         }
+    }
+
+    /// Scan the history buffer and return the maximum excursion from
+    /// centre as a fraction of `half_h`. The rendered trace converts
+    /// history values in `[-1, 1]` via `center_y - val * half_h`, so
+    /// |val| = 1.0 corresponds to an excursion spanning 100% of the
+    /// half-pane (i.e. 50% of the full pane height in rows).
+    fn history_excursion(hb: &Heartbeat) -> f32 {
+        hb.history.iter().fold(0.0_f32, |acc, v| acc.max(v.abs()))
+    }
+
+    #[test]
+    fn quiet_listening_volume_lifts_trace_off_baseline() {
+        // Regression for CLI-97: at 0.05 sample peak the old direct
+        // map (`avg of s * |s|` without AGC) compressed the signal to
+        // ~0.0025 and pinned the trace to one pixel above the
+        // baseline. After SampleScaler AGC the signal reaches a
+        // meaningful fraction of the pane height.
+        let mut hb = Heartbeat::new();
+        // DC-biased samples at +0.05 so each frame has a real non-zero
+        // average (a sine over many cycles averages to ~0).
+        let fft = fft_with_samples(vec![0.05_f32; 1024]);
+        let mut grid = CellGrid::new(40, 12);
+        for _ in 0..60 {
+            let mut ctx = TuiContext { grid: &mut grid };
+            hb.render_tui(&mut ctx, &fft);
+        }
+        let excursion = history_excursion(&hb);
+        // The trace maps |val|=1 to 50% of pane height (half_h). So
+        // ≥20% pane height = ≥0.4 excursion.
+        assert!(
+            excursion >= 0.4,
+            "quiet-volume trace must lift ≥20% of pane height, got excursion {excursion}"
+        );
+    }
+
+    #[test]
+    fn loud_volume_saturates_without_overshoot() {
+        let mut hb = Heartbeat::new();
+        let fft = fft_with_samples(vec![0.3_f32; 1024]);
+        let mut grid = CellGrid::new(40, 12);
+        for _ in 0..60 {
+            let mut ctx = TuiContext { grid: &mut grid };
+            hb.render_tui(&mut ctx, &fft);
+        }
+        let excursion = history_excursion(&hb);
+        // ≥80% of pane height = ≥1.6 of half_h? No — |val|=1 is 50%
+        // of pane, which is the ceiling, so ≥0.8 here means the trace
+        // reaches ≥40% of pane height, well above the ≥80%-of-
+        // half-span intent. Bound from above at 1.0 to check clamp.
+        assert!(
+            excursion >= 0.8,
+            "loud-volume trace must peak at ≥80% of half-span, got {excursion}"
+        );
+        assert!(
+            excursion <= 1.0,
+            "trace must never overshoot clamp, got {excursion}"
+        );
     }
 }

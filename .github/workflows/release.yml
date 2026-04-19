@@ -114,13 +114,16 @@ jobs:
         run: |
           TAG="${REF#refs/tags/}"
           VERSION="${TAG#v}"
-          awk -v v="$VERSION" '
+          # RCs share notes with their target release so we don't
+          # have to maintain a throwaway ## [X.Y.Z-rcN] stanza.
+          BASE_VERSION="${VERSION%-rc*}"
+          awk -v v="$BASE_VERSION" '
             $0 ~ "^## \\[" v "\\]" { flag=1; next }
             /^## \[/ && flag { flag=0 }
             flag
           ' CHANGELOG.md > release-notes.md
           if [ ! -s release-notes.md ]; then
-            echo "::error::release-notes.md is empty — CHANGELOG.md has no [$VERSION] section"
+            echo "::error::release-notes.md is empty — CHANGELOG.md has no [$BASE_VERSION] section"
             exit 1
           fi
           echo "=== release-notes.md ($(wc -l < release-notes.md) lines) ==="

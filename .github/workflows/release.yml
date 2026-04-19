@@ -118,3 +118,106 @@ jobs:
             --notes-file release-notes.md \
             artifacts/clitunes-*.tar.gz \
             artifacts/clitunes-*.tar.gz.sha256
+
+  # Requires repo secret HOMEBREW_TAP_TOKEN: a PAT (fine-grained preferred)
+  # with Contents: Read & Write on vxcozy/homebrew-tap. Without it the
+  # checkout step below fails loudly — first tag push after merging this
+  # must have the secret in place.
+  homebrew-tap:
+    name: Bump homebrew-tap
+    needs: [build, release]
+    runs-on: ubuntu-latest
+    # Skip release candidates — the tap tracks stable versions only.
+    if: ${{ !contains(github.ref_name, '-rc') }}
+    steps:
+      - name: Checkout tap
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
+        with:
+          repository: vxcozy/homebrew-tap
+          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          path: tap
+
+      - name: Compute checksums for all 4 targets
+        id: hashes
+        env:
+          TAG: ${{ github.ref_name }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          version="${TAG#v}"
+          base="https://github.com/${REPO}/releases/download/${TAG}"
+          declare -A hashes
+          for t in aarch64-apple-darwin x86_64-apple-darwin aarch64-unknown-linux-gnu x86_64-unknown-linux-gnu; do
+            url="${base}/clitunes-${TAG}-${t}.tar.gz"
+            # Retry: release asset upload may lag a few seconds behind the build job completing.
+            ok=0
+            for i in 1 2 3 4 5; do
+              if curl -fsSL -o "/tmp/${t}.tar.gz" "$url"; then
+                ok=1
+                break
+              fi
+              sleep $((i * 5))
+            done
+            if [ "$ok" -ne 1 ]; then
+              echo "::error::failed to download $url after 5 retries"
+              exit 1
+            fi
+            hashes[$t]=$(sha256sum "/tmp/${t}.tar.gz" | awk '{print $1}')
+          done
+          {
+            echo "version=${version}"
+            echo "sha_aarch64_apple_darwin=${hashes[aarch64-apple-darwin]}"
+            echo "sha_x86_64_apple_darwin=${hashes[x86_64-apple-darwin]}"
+            echo "sha_aarch64_unknown_linux_gnu=${hashes[aarch64-unknown-linux-gnu]}"
+            echo "sha_x86_64_unknown_linux_gnu=${hashes[x86_64-unknown-linux-gnu]}"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Rewrite Formula/clitunes.rb
+        env:
+          VERSION: ${{ steps.hashes.outputs.version }}
+          SHA_AARCH64_APPLE_DARWIN: ${{ steps.hashes.outputs.sha_aarch64_apple_darwin }}
+          SHA_X86_64_APPLE_DARWIN: ${{ steps.hashes.outputs.sha_x86_64_apple_darwin }}
+          SHA_AARCH64_UNKNOWN_LINUX_GNU: ${{ steps.hashes.outputs.sha_aarch64_unknown_linux_gnu }}
+          SHA_X86_64_UNKNOWN_LINUX_GNU: ${{ steps.hashes.outputs.sha_x86_64_unknown_linux_gnu }}
+        run: |
+          set -euo pipefail
+          cd tap
+          python3 - <<'PY'
+          import pathlib, re, os
+          p = pathlib.Path("Formula/clitunes.rb")
+          src = p.read_text()
+          v = os.environ["VERSION"]
+          replacements = {
+              "aarch64-apple-darwin":      os.environ["SHA_AARCH64_APPLE_DARWIN"],
+              "x86_64-apple-darwin":       os.environ["SHA_X86_64_APPLE_DARWIN"],
+              "aarch64-unknown-linux-gnu": os.environ["SHA_AARCH64_UNKNOWN_LINUX_GNU"],
+              "x86_64-unknown-linux-gnu":  os.environ["SHA_X86_64_UNKNOWN_LINUX_GNU"],
+          }
+          for tgt, sha in replacements.items():
+              # Targeted per-arch rewrite: if the formula shape changes the regex
+              # won't match and the guard below raises loudly.
+              src, n = re.subn(
+                  rf'url "https://github\.com/vxcozy/clitunes/releases/download/v[\d.]+(?:-rc\d+)?/clitunes-v[\d.]+(?:-rc\d+)?-{re.escape(tgt)}\.tar\.gz"\n(\s+)sha256 "[0-9a-f]+"',
+                  f'url "https://github.com/vxcozy/clitunes/releases/download/v{v}/clitunes-v{v}-{tgt}.tar.gz"\n\\1sha256 "{sha}"',
+                  src,
+              )
+              if n != 1:
+                  raise SystemExit(f"::error::expected 1 match for {tgt}, got {n}")
+          p.write_text(src)
+          PY
+
+      - name: Commit + push
+        env:
+          VERSION: ${{ steps.hashes.outputs.version }}
+        run: |
+          set -euo pipefail
+          cd tap
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if git diff --quiet Formula/clitunes.rb; then
+            echo "::error::no changes after rewrite — formula regex didn't match"
+            exit 1
+          fi
+          git add Formula/clitunes.rb
+          git commit -m "clitunes ${VERSION}"
+          git push origin main

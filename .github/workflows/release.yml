@@ -3,6 +3,21 @@ name: Release
 on:
   push:
     tags: ["v*"]
+  # Manual trigger exists so we can validate the homebrew-tap job against
+  # an already-released tag without cutting a new release. Build/release
+  # skip on dispatch (they'd re-publish artifacts that already exist);
+  # the tap-bump job is the only thing that runs.
+  workflow_dispatch:
+    inputs:
+      target_tag:
+        description: "Existing release tag to bump the tap to (e.g. v1.2.0)"
+        required: true
+        type: string
+      dry_run:
+        description: "Run the whole flow but skip the git push to vxcozy/homebrew-tap"
+        required: false
+        default: true
+        type: boolean
 
 permissions:
   contents: write
@@ -12,6 +27,9 @@ env:
 
 jobs:
   build:
+    # Only build + publish on real tag pushes; workflow_dispatch is for
+    # re-testing the tap-bump job against an existing release.
+    if: github.event_name == 'push'
     strategy:
       matrix:
         include:
@@ -80,6 +98,7 @@ jobs:
 
   release:
     needs: build
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
@@ -127,8 +146,21 @@ jobs:
     name: Bump homebrew-tap
     needs: [build, release]
     runs-on: ubuntu-latest
-    # Skip release candidates — the tap tracks stable versions only.
-    if: ${{ !contains(github.ref_name, '-rc') }}
+    # Run on:
+    #   (a) workflow_dispatch — validation path, may be dry-run
+    #   (b) stable tag push where build + release both succeeded
+    # Skip: release candidates on tag push (tap tracks stable only) and
+    # any tag push where an upstream job failed/skipped.
+    # `always()` is required so GitHub evaluates our explicit checks
+    # instead of short-circuiting on the default "needs failed → skip".
+    if: |
+      always() && (
+        github.event_name == 'workflow_dispatch' ||
+        (github.event_name == 'push' &&
+         needs.build.result == 'success' &&
+         needs.release.result == 'success' &&
+         !contains(github.ref_name, '-rc'))
+      )
     steps:
       - name: Checkout tap
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
@@ -140,7 +172,9 @@ jobs:
       - name: Compute checksums for all 4 targets
         id: hashes
         env:
-          TAG: ${{ github.ref_name }}
+          # On push: TAG is the ref (v1.2.0). On workflow_dispatch: TAG is
+          # the operator-supplied input. `||` picks the first truthy value.
+          TAG: ${{ inputs.target_tag || github.ref_name }}
           REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
@@ -206,7 +240,16 @@ jobs:
           p.write_text(src)
           PY
 
+      - name: Show diff
+        # Always-logged for visibility on both push and dispatch runs.
+        # On dry-run dispatch this is the only record of what would change.
+        run: |
+          cd tap
+          git --no-pager diff Formula/clitunes.rb || true
+
       - name: Commit + push
+        # Tag-push: always commits. Dispatch: commits only when dry_run=false.
+        if: github.event_name == 'push' || inputs.dry_run == false
         env:
           VERSION: ${{ steps.hashes.outputs.version }}
         run: |

@@ -145,7 +145,6 @@ terminal to jump there.
 | `pulse` | Braille pulsating circle with shockwave rings on beats |
 | `rain` | Box-drawing falling rain streaks driven by frequency bands |
 | `sakura` | Braille cherry blossom petals drifting with audio energy |
-| `firework` | Braille particle explosions with rising trails and bursts |
 | `retro` | Braille synthwave scene with sun, wave, and perspective grid |
 
 ## Exit codes

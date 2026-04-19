@@ -1,6 +1,6 @@
 //! Subsequence fuzzy matcher for the `:viz <name>` command bar.
 //!
-//! Purpose-built for a tiny catalogue (23 visualiser names, ~8 chars each)
+//! Purpose-built for a tiny catalogue (22 visualiser names, ~8 chars each)
 //! — no external dep, no trained ranking, no Unicode-aware scoring. The
 //! trade-off is intentional: adding a crate like `nucleo` for 23 strings
 //! would outweigh the savings. If the catalogue grows past ~100, swap the
@@ -123,7 +123,6 @@ mod tests {
         "pulse",
         "rain",
         "sakura",
-        "firework",
         "retro",
     ];
 

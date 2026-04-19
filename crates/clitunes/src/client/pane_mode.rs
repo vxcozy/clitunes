@@ -17,9 +17,9 @@ use clitunes_engine::audio::FftTap;
 use clitunes_engine::pcm::cross_process_api::PcmConsumer;
 use clitunes_engine::proto::events::Event;
 use clitunes_engine::visualiser::{
-    AnsiWriter, BarsDot, BarsOutline, Binary, Butterfly, CellGrid, ClassicPeak, Fire, Firework,
-    Heartbeat, Matrix, Metaballs, Moire, Plasma, Pulse, Rain, Retro, Ripples, Sakura, Scatter,
-    Scope, Terrain, TuiContext, Tunnel, Visualiser, Vortex, Wave,
+    AnsiWriter, BarsDot, BarsOutline, Binary, Butterfly, CellGrid, ClassicPeak, Fire, Heartbeat,
+    Matrix, Metaballs, Moire, Plasma, Pulse, Rain, Retro, Ripples, Sakura, Scatter, Scope, Terrain,
+    TuiContext, Tunnel, Visualiser, Vortex, Wave,
 };
 
 const FFT_SIZE: usize = 2048;
@@ -83,7 +83,6 @@ fn run_visualiser_pane(config: PaneModeConfig) -> Result<()> {
         Box::new(Pulse::new()),
         Box::new(Rain::new()),
         Box::new(Sakura::new()),
-        Box::new(Firework::new()),
         Box::new(Retro::new()),
     ];
 

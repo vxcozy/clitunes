@@ -7,6 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.2.1] - 2026-04-19
+
+### Fixed
+
+- **Sakura, heartbeat visualisers now react at normal listening volume.**
+  Both had amplitude-scaling bugs in the same family as the v1.2.0 bar-
+  family fix. Sakura's `spawn_count` was integer-truncating to zero at
+  quiet volumes (black screen); heartbeat's ECG trace mapped raw sample
+  amplitudes straight to pixel Y-offsets, drawing a one-pixel "flatline"
+  instead of a scrollable cardiogram. Both now flow through the
+  `scaling.rs` AGC helpers — `SpectrumScaler` for sakura's magnitude-
+  domain intensity, a new `SampleScaler` for heartbeat's bipolar sample
+  domain.
+- **Homebrew tap auto-bumps on every release.** `release.yml` gained a
+  `homebrew-tap` job that runs after the build matrix + release step and
+  pushes the updated formula to `vxcozy/homebrew-tap`. Next
+  `brew upgrade clitunes` after a tag push now lands the new version
+  without a human re-computing four SHA256s by hand. Release-candidate
+  tags (`vX.Y.Z-rcN`) skip the tap-bump so the stable tap never tracks
+  an RC.
+
+### Removed
+
+- **Firework visualiser.** Onset-triggered particle bursts duplicated
+  the niche already covered by `pulse`, so the catalogue drops from 23
+  to 22 entries. `p × 2` from the default carousel position now lands
+  on sakura, which animates correctly post-fix.
+
 ## [1.2.0] - 2026-04-18
 
 ### Added

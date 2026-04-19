@@ -361,7 +361,7 @@ dependencies = [
 
 [[package]]
 name = "clitunes"
-version = "1.2.0"
+version = "1.2.1"
 dependencies = [
  "anyhow",
  "clitunes-core",
@@ -377,7 +377,7 @@ dependencies = [
 
 [[package]]
 name = "clitunes-core"
-version = "1.2.0"
+version = "1.2.1"
 dependencies = [
  "serde",
  "serde_json",
@@ -386,7 +386,7 @@ dependencies = [
 
 [[package]]
 name = "clitunes-engine"
-version = "1.2.0"
+version = "1.2.1"
 dependencies = [
  "anyhow",
  "bytes",
@@ -430,7 +430,7 @@ dependencies = [
 
 [[package]]
 name = "clitunesd"
-version = "1.2.0"
+version = "1.2.1"
 dependencies = [
  "anyhow",
  "clitunes-core",

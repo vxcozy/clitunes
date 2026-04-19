@@ -12,7 +12,7 @@ edition = "2021"
 license = "MIT"
 authors = ["clitunes contributors"]
 repository = "https://github.com/vxcozy/clitunes"
-version = "1.2.0"
+version = "1.2.1"
 keywords = ["music", "radio", "visualizer", "terminal", "tui"]
 categories = ["command-line-utilities", "multimedia::audio"]
 
